@@ -32,6 +32,7 @@ import {
   Bug,
   RotateCcw,
   ListChecks,
+  Puzzle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -90,6 +91,7 @@ const navSections: NavSection[] = [
     label: "Configuration",
     items: [
       { href: "/admin/setup", label: "Setup", icon: ListChecks },
+      { href: "/admin/modules", label: "Modules", icon: Puzzle },
       { href: "/admin/seasons", label: "Hut Fees & Seasons", icon: CalendarRange },
       { href: "/admin/promo-codes", label: "Promo Codes", icon: Tag },
       { href: "/admin/booking-policies", label: "Booking Policies", icon: XCircle },

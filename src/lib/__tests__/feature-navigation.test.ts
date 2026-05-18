@@ -61,5 +61,6 @@ describe("feature-aware navigation", () => {
     expect(items).not.toContain("Chores");
     expect(items).not.toContain("Xero");
     expect(items).toContain("Bookings");
+    expect(items).toContain("Modules");
   });
 });

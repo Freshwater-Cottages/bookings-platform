@@ -58,9 +58,12 @@ fork for another organisation. See `NOTICE.md`.
 4. Choose feature flags in `.env`: `FEATURE_KIOSK`, `FEATURE_CHORES`,
    `FEATURE_FINANCE_DASHBOARD`, `FEATURE_WAITLIST`, and
    `FEATURE_XERO_INTEGRATION`. Only the literal value `true` enables a feature.
-5. Set `SEED_ADMIN_EMAIL` and `SEED_ADMIN_PASSWORD`, run the seed command, then
+5. After sign-in, use **Admin > Modules** to set club-level activation for
+   optional modules. These database settings do not replace the `.env`
+   deploy/operator capability flags.
+6. Set `SEED_ADMIN_EMAIL` and `SEED_ADMIN_PASSWORD`, run the seed command, then
    change the seeded admin password on first login.
-6. Use test/demo credentials for Stripe, Xero, SES, and Sentry until you are
+7. Use test/demo credentials for Stripe, Xero, SES, and Sentry until you are
    ready for a controlled deployment of your own environment.
 
 You can use the setup helpers for a guided path:

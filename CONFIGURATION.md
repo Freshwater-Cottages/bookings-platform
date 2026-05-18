@@ -139,6 +139,19 @@ the feature.
 | `FEATURE_WAITLIST` | Enables waitlist routes and waitlist cron registration. |
 | `FEATURE_XERO_INTEGRATION` | Enables operational Xero routes/navigation and Xero cron registration. |
 
+## Admin Module Activation
+
+The Admin dashboard includes `/admin/modules` for club-level activation of the
+optional modules covered by the feature flags above. These settings are stored
+in the `ClubModuleSettings` database table as booleans only. They do not store
+secrets, tokens, tenant ids, or external provider credentials.
+
+The `.env` feature flags remain deploy/operator capability gates. A module is
+ready only when its feature flag is `true` and its Admin Modules activation is
+enabled. New installations seed the activation row with all module activations
+enabled so existing deployments keep their current behaviour until an admin
+changes the database-backed settings.
+
 ## Stripe
 
 | Variable | Description |
