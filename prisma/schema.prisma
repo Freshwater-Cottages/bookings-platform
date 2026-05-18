@@ -1175,6 +1175,24 @@ model SetupProgress {
 }
 
 // ---------------------------------------------------------------------------
+// Club Module Settings (admin-level activation for optional modules)
+// ---------------------------------------------------------------------------
+
+model ClubModuleSettings {
+  id                String   @id @default("default")
+  kiosk             Boolean  @default(true)
+  chores            Boolean  @default(true)
+  financeDashboard  Boolean  @default(true)
+  waitlist          Boolean  @default(true)
+  xeroIntegration   Boolean  @default(true)
+  updatedByMemberId String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([updatedByMemberId])
+}
+
+// ---------------------------------------------------------------------------
 // Booking Modifications (history of changes to bookings)
 // ---------------------------------------------------------------------------
 
