@@ -116,7 +116,7 @@ export default function HomePage() {
               About the Club
             </h2>
             <p className="mx-auto mt-3 max-w-2xl text-brand-deep/80">
-              The {CLUB_NAME} has been connecting people with New
+              The {CLUB_NAME}{" "}has been connecting people with New
               Zealand&apos;s mountains since 1969. We&apos;re a community of
               outdoor enthusiasts who share a love of the alpine environment.
             </p>
@@ -214,7 +214,7 @@ export default function HomePage() {
             </h2>
             <div className="space-y-4 text-brand-deep/80">
               <p>
-                The {CLUB_NAME} is a members&apos; club. To stay at the
+                The {CLUB_NAME}{" "}is a members&apos; club. To stay at the
                 lodge, you need to either be a member or be invited as a guest
                 by an existing member. Non-member guests must be accompanied by
                 the member who booked them.

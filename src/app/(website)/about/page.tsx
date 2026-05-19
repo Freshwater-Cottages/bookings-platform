@@ -30,7 +30,7 @@ export default function AboutPage() {
             About the Club
           </h1>
           <p className="mt-4 max-w-2xl text-lg text-brand-snow/82">
-            The {CLUB_NAME} has been connecting people with New
+            The {CLUB_NAME}{" "}has been connecting people with New
             Zealand&apos;s mountains since 1969.
           </p>
         </div>
