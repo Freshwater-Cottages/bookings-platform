@@ -4,6 +4,9 @@ import {
   ADMIN_NOTIFICATION_PREFERENCE_SELECT,
   resolveAdminNotificationPreferences,
 } from "@/lib/admin-notification-preferences";
+import { listNotificationDeliveryPolicies } from "@/lib/notification-delivery-policies";
+import { EmailMessageSettingsPanel } from "@/components/admin/email-settings/email-message-settings-panel";
+import { NotificationDeliveryPolicySettings } from "@/components/admin/email-settings/notification-delivery-policy-settings";
 import { AdminNotificationSettings } from "./notifications-settings";
 
 async function getAdminUsers() {
@@ -30,7 +33,10 @@ async function getAdminUsers() {
 }
 
 export default async function AdminNotificationsPage() {
-  const admins = await getAdminUsers();
+  const [admins, policies] = await Promise.all([
+    getAdminUsers(),
+    listNotificationDeliveryPolicies(),
+  ]);
 
   return (
     <div className="space-y-8">
@@ -43,6 +49,18 @@ export default async function AdminNotificationsPage() {
 
       <Card>
         <CardHeader>
+          <CardTitle>Delivery Rules</CardTitle>
+          <CardDescription>
+            Control which admin and system emails are sent when jobs or alerts run.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <NotificationDeliveryPolicySettings initialPolicies={policies} />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
           <CardTitle>Admin Notification Recipients</CardTitle>
           <CardDescription>
             Changes save automatically. New admin alert types default to enabled.
@@ -50,6 +68,18 @@ export default async function AdminNotificationsPage() {
         </CardHeader>
         <CardContent>
           <AdminNotificationSettings initialAdmins={admins} />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Email Messages</CardTitle>
+          <CardDescription>
+            Edit shared email variables and message wording for audited templates.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <EmailMessageSettingsPanel />
         </CardContent>
       </Card>
     </div>
