@@ -1,5 +1,46 @@
 import { NextResponse } from "next/server";
+import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+
+type SessionUser = {
+  id: string;
+  role: string;
+  email?: string | null;
+};
+
+type RequireAdminResult =
+  | { ok: true; session: { user: SessionUser } }
+  | { ok: false; response: NextResponse };
+
+/**
+ * Shared admin auth helper. Returns the session on success; otherwise
+ * a NextResponse with the correct 401 vs 403 split and the active
+ * session check applied. Use at the top of admin route handlers:
+ *
+ *   const guard = await requireAdmin();
+ *   if (!guard.ok) return guard.response;
+ *   const session = guard.session;
+ */
+export async function requireAdmin(): Promise<RequireAdminResult> {
+  const session = await auth();
+  if (!session?.user?.id) {
+    return {
+      ok: false,
+      response: NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
+    };
+  }
+  if (session.user.role !== "ADMIN") {
+    return {
+      ok: false,
+      response: NextResponse.json({ error: "Forbidden" }, { status: 403 }),
+    };
+  }
+  const inactive = await requireActiveSessionUser(session.user.id);
+  if (inactive) {
+    return { ok: false, response: inactive };
+  }
+  return { ok: true, session: { user: session.user as SessionUser } };
+}
 
 type RequireActiveSessionUserOptions = {
   allowForcePasswordChange?: boolean;
