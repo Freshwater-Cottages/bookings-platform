@@ -84,6 +84,18 @@ export default async function BookingDetailPage({
           reviewedAt: true,
         },
       },
+      changeRequests: {
+        orderBy: { createdAt: "desc" },
+        select: {
+          id: true,
+          status: true,
+          reason: true,
+          adminNotes: true,
+          requestedChanges: true,
+          createdAt: true,
+          reviewedAt: true,
+        },
+      },
       createdBy: {
         select: { firstName: true, lastName: true },
       },
@@ -237,6 +249,47 @@ export default async function BookingDetailPage({
           <strong>Admin review required.</strong>{" "}
           {booking.adminReviewReason ?? "This booking needs manual review by an admin."}
         </div>
+      )}
+
+      {booking.changeRequests.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Change Requests</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {booking.changeRequests.map((request) => {
+              const requested = request.requestedChanges as {
+                requested?: { summary?: string | null };
+              };
+              return (
+                <div key={request.id} className="rounded-md border p-3 text-sm">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="font-medium">
+                      {requested.requested?.summary ?? "Booking change request"}
+                    </p>
+                    <Badge variant={request.status === "PENDING" ? "outline" : "secondary"}>
+                      {request.status}
+                    </Badge>
+                  </div>
+                  <p className="mt-1 text-slate-500">
+                    Submitted{" "}
+                    {request.createdAt.toLocaleDateString("en-NZ", {
+                      day: "numeric",
+                      month: "short",
+                      year: "numeric",
+                    })}
+                  </p>
+                  {request.reason ? (
+                    <p className="mt-2 text-slate-700">{request.reason}</p>
+                  ) : null}
+                  {request.adminNotes ? (
+                    <p className="mt-2 text-slate-600">{request.adminNotes}</p>
+                  ) : null}
+                </div>
+              );
+            })}
+          </CardContent>
+        </Card>
       )}
 
       {showArrivalTime && (

@@ -62,6 +62,7 @@ const navSections: NavSection[] = [
     label: "Bookings & Payments",
     items: [
       { href: "/admin/bookings", label: "Bookings", icon: BookOpen },
+      { href: "/admin/booking-change-requests", label: "Change Requests", icon: ClipboardList },
       { href: "/admin/waitlist", label: "Waitlist", icon: Clock },
       { href: "/admin/payments", label: "Payments", icon: CreditCard },
       { href: "/admin/refund-requests", label: "Refunds & Credits", icon: RotateCcw },
@@ -195,6 +196,29 @@ function usePendingRefundAppeals(): number {
   return count;
 }
 
+function usePendingBookingChangeRequests(): number {
+  const [count, setCount] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    fetch("/api/admin/booking-change-requests?status=PENDING&pageSize=1")
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data) => {
+        if (!cancelled) {
+          setCount(typeof data?.total === "number" ? data.total : 0);
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return count;
+}
+
 function usePendingCreditApprovals(): number {
   const [count, setCount] = useState(0);
 
@@ -252,6 +276,7 @@ function SidebarLinks({
   const pendingFamilyRequests = usePendingFamilyRequests();
   const pendingApplications = usePendingApplications();
   const pendingRefundAppeals = usePendingRefundAppeals();
+  const pendingBookingChangeRequests = usePendingBookingChangeRequests();
   const pendingCreditApprovals = usePendingCreditApprovals();
   const pendingMembershipCancellations = usePendingMembershipCancellations();
   const visibleNavSections = getVisibleAdminNavSections(features);
@@ -263,6 +288,9 @@ function SidebarLinks({
   }
   if (pendingFamilyRequests > 0) {
     badges["/admin/family-groups"] = pendingFamilyRequests;
+  }
+  if (pendingBookingChangeRequests > 0) {
+    badges["/admin/booking-change-requests"] = pendingBookingChangeRequests;
   }
   if (pendingRefundAppeals + pendingCreditApprovals > 0) {
     badges["/admin/refund-requests"] =
@@ -277,16 +305,16 @@ function SidebarLinks({
       <Link
         href="/dashboard"
         onClick={onNavigate}
-        className="flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-colors text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+        className="flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
       >
-        <House className="h-4 w-4 shrink-0 text-slate-400" />
+        <House className="h-4 w-4 shrink-0 text-muted-foreground" />
         Member Dashboard
       </Link>
-      <div className="my-1.5 border-t border-slate-100" />
+      <div className="my-1.5 border-t border-border" />
       {visibleNavSections.map((section, sIdx) => (
         <div key={sIdx}>
           {section.label && (
-            <p className="px-3 pt-3 pb-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+            <p className="px-3 pt-3 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
               {section.label}
             </p>
           )}
@@ -310,13 +338,13 @@ function SidebarLinks({
                   "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
                   active
                     ? "app-nav-link-active"
-                    : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+                    : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
                 )}
               >
                 <Icon
                   className={cn(
                     "h-4 w-4 shrink-0",
-                    active ? "text-brand-charcoal" : "text-slate-400"
+                    active ? "text-current" : "text-muted-foreground"
                   )}
                 />
                 <span className="flex-1">{label}</span>
@@ -340,8 +368,8 @@ export function AdminSidebar({ features }: { features: FeatureFlags }) {
   return (
     <>
       {/* Desktop sidebar */}
-      <aside className="hidden w-60 shrink-0 flex-col border-r bg-white print:hidden md:flex">
-        <div className="flex h-16 items-center gap-2 border-b px-4 font-bold text-slate-900">
+      <aside className="hidden w-60 shrink-0 flex-col border-r bg-background print:hidden md:flex">
+        <div className="flex h-16 items-center gap-2 border-b px-4 font-bold text-foreground">
           <span className="app-brand-mark h-9 w-9">
             <Mountain className="h-5 w-5" />
           </span>
@@ -353,7 +381,7 @@ export function AdminSidebar({ features }: { features: FeatureFlags }) {
       </aside>
 
       {/* Mobile header bar with toggle */}
-      <div className="flex h-14 items-center gap-3 border-b bg-white px-4 print:hidden md:hidden">
+      <div className="flex h-14 items-center gap-3 border-b bg-background px-4 print:hidden md:hidden">
         <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
           <SheetTrigger asChild>
             <Button variant="ghost" size="icon" aria-label="Open admin menu">
@@ -375,7 +403,7 @@ export function AdminSidebar({ features }: { features: FeatureFlags }) {
             </div>
           </SheetContent>
         </Sheet>
-        <span className="font-semibold text-slate-800">Admin Panel</span>
+        <span className="font-semibold text-foreground">Admin Panel</span>
       </div>
     </>
   );

@@ -48,6 +48,7 @@ import {
   membershipCancellationApprovedTemplate,
   membershipCancellationRejectedTemplate,
   adminRefundRequestTemplate,
+  adminBookingChangeRequestTemplate,
   adminIssueReportTemplate,
   type XeroReconciliationReportEmail,
 } from "./email-templates";
@@ -1636,6 +1637,42 @@ export async function sendAdminRefundRequestAlert(data: {
           : formatMoneyCents(data.requestedAmountCents),
     },
     preferenceKey: "adminRefundRequest",
+  });
+}
+
+export async function sendAdminBookingChangeRequestAlert(data: {
+  memberName: string;
+  memberEmail: string;
+  bookingId: string;
+  checkIn: Date;
+  checkOut: Date;
+  requestedSummary: string;
+  reason: string | null;
+  requestId: string;
+}) {
+  const reviewUrl = `${process.env.NEXTAUTH_URL || "http://localhost:3000"}/admin/booking-change-requests?requestId=${encodeURIComponent(data.requestId)}`;
+
+  await sendToAdmins({
+    subject: `Booking Change Request: ${data.memberName}`,
+    html: adminBookingChangeRequestTemplate({
+      memberName: data.memberName,
+      memberEmail: data.memberEmail,
+      bookingId: data.bookingId,
+      checkIn: data.checkIn,
+      checkOut: data.checkOut,
+      requestedSummary: data.requestedSummary,
+      reason: data.reason,
+      reviewUrl,
+    }),
+    templateName: "admin-booking-change-request",
+    templateData: {
+      ...data,
+      checkIn: formatNZDate(data.checkIn),
+      checkOut: formatNZDate(data.checkOut),
+      reason: data.reason ?? "",
+      reviewUrl,
+    },
+    preferenceKey: "adminFamilyGroupRequest",
   });
 }
 

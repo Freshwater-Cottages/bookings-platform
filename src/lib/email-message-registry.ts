@@ -33,6 +33,7 @@ const ADMIN_SYSTEM_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([
   "admin-xero-repeated-failure",
   "admin-xero-reconciliation-report",
   "admin-refund-request",
+  "admin-booking-change-request",
   "admin-issue-report",
   "admin-waitlist-offer",
   "admin-family-group-request",
@@ -131,6 +132,10 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
   "admin-email-failure": {
     triggerSummary: "Exhausted retry alert",
     frequency: "When a retryable email permanently fails",
+  },
+  "admin-booking-change-request": {
+    triggerSummary: "Locked booking change request submitted",
+    frequency: "Per member/admin request submission",
   },
   "bulk-communication": {
     triggerSummary: "Admin bulk communication send",
@@ -355,6 +360,7 @@ export const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   "recipientName",
   "profileUrl",
   "requestType",
+  "requestedSummary",
   "requestedAmount",
   "requesterName",
   "rejoinProcessText",

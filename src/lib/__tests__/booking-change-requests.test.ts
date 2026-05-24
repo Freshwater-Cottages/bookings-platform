@@ -1,0 +1,305 @@
+import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
+import { NextRequest } from "next/server";
+
+const mocks = vi.hoisted(() => ({
+  auth: vi.fn(),
+  requireActiveSessionUser: vi.fn().mockResolvedValue(null),
+  bookingFindUnique: vi.fn(),
+  bookingChangeRequestFindFirst: vi.fn(),
+  bookingChangeRequestCreate: vi.fn(),
+  bookingChangeRequestFindMany: vi.fn(),
+  bookingChangeRequestCount: vi.fn(),
+  bookingChangeRequestFindUnique: vi.fn(),
+  bookingChangeRequestUpdateMany: vi.fn(),
+  logAudit: vi.fn(),
+  sendAdminBookingChangeRequestAlert: vi.fn(),
+}));
+
+vi.mock("@/lib/auth", () => ({
+  auth: mocks.auth,
+}));
+
+vi.mock("@/lib/session-guards", () => ({
+  requireActiveSessionUser: mocks.requireActiveSessionUser,
+}));
+
+vi.mock("@/lib/prisma", () => ({
+  prisma: {
+    booking: {
+      findUnique: (...args: unknown[]) => mocks.bookingFindUnique(...args),
+    },
+    bookingChangeRequest: {
+      findFirst: (...args: unknown[]) => mocks.bookingChangeRequestFindFirst(...args),
+      create: (...args: unknown[]) => mocks.bookingChangeRequestCreate(...args),
+      findMany: (...args: unknown[]) => mocks.bookingChangeRequestFindMany(...args),
+      count: (...args: unknown[]) => mocks.bookingChangeRequestCount(...args),
+      findUnique: (...args: unknown[]) => mocks.bookingChangeRequestFindUnique(...args),
+      updateMany: (...args: unknown[]) => mocks.bookingChangeRequestUpdateMany(...args),
+    },
+  },
+}));
+
+vi.mock("@/lib/audit", () => ({
+  logAudit: (...args: unknown[]) => mocks.logAudit(...args),
+}));
+
+vi.mock("@/lib/email", () => ({
+  sendAdminBookingChangeRequestAlert: (...args: unknown[]) =>
+    mocks.sendAdminBookingChangeRequestAlert(...args),
+}));
+
+vi.mock("@/lib/logger", () => ({
+  default: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
+}));
+
+import {
+  GET as getMemberBookingChangeRequests,
+  POST as postBookingChangeRequest,
+} from "@/app/api/bookings/[id]/change-requests/route";
+import { GET as getAdminBookingChangeRequests } from "@/app/api/admin/booking-change-requests/route";
+import { PATCH as patchAdminBookingChangeRequest } from "@/app/api/admin/booking-change-requests/[id]/route";
+
+function makeBooking(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "booking-1",
+    memberId: "member-1",
+    status: "COMPLETED",
+    checkIn: new Date("2026-05-23T00:00:00.000Z"),
+    checkOut: new Date("2026-05-27T00:00:00.000Z"),
+    guests: [
+      {
+        id: "guest-1",
+        firstName: "Alex",
+        lastName: "Example",
+        ageTier: "ADULT",
+        isMember: true,
+        memberId: "member-1",
+        stayStart: new Date("2026-05-23T00:00:00.000Z"),
+        stayEnd: new Date("2026-05-27T00:00:00.000Z"),
+      },
+    ],
+    member: {
+      id: "member-1",
+      firstName: "Alex",
+      lastName: "Example",
+      email: "alex@example.com",
+    },
+    payment: {
+      id: "payment-1",
+      amountCents: 12000,
+      refundedAmountCents: 0,
+      status: "SUCCEEDED",
+      stripePaymentIntentId: "pi_123",
+      xeroInvoiceId: "xero-inv-1",
+      xeroInvoiceNumber: "INV-001",
+    },
+    ...overrides,
+  };
+}
+
+describe("booking change requests", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-24T00:00:00.000Z"));
+    vi.clearAllMocks();
+    mocks.auth.mockResolvedValue({
+      user: { id: "member-1", role: "MEMBER" },
+    });
+    mocks.requireActiveSessionUser.mockResolvedValue(null);
+    mocks.bookingChangeRequestFindFirst.mockResolvedValue(null);
+    mocks.bookingChangeRequestCreate.mockResolvedValue({
+      id: "request-1",
+      bookingId: "booking-1",
+      requesterId: "member-1",
+      status: "PENDING",
+      requestedChanges: {},
+      reason: "Weather closed the road.",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    mocks.sendAdminBookingChangeRequestAlert.mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("creates an admin-reviewed request for a locked in-progress checkout change", async () => {
+    mocks.bookingFindUnique.mockResolvedValue(makeBooking());
+
+    const request = new NextRequest(
+      "http://localhost/api/bookings/booking-1/change-requests",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-forwarded-for": "127.0.0.1",
+        },
+        body: JSON.stringify({
+          checkOut: "2026-05-24",
+          reason: "Weather closed the road.",
+        }),
+      }
+    );
+
+    const response = await postBookingChangeRequest(request, {
+      params: Promise.resolve({ id: "booking-1" }),
+    });
+
+    expect(response.status).toBe(201);
+    expect(mocks.bookingChangeRequestCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        bookingId: "booking-1",
+        requesterId: "member-1",
+        reason: "Weather closed the road.",
+        requestedChanges: expect.objectContaining({
+          requested: expect.objectContaining({
+            checkOut: "2026-05-24",
+            summary: "check-out to 2026-05-24",
+          }),
+          lockedPeriod: expect.objectContaining({
+            today: "2026-05-24",
+            editableFrom: "2026-05-25",
+            touchesLockedPeriod: true,
+          }),
+          payment: expect.objectContaining({
+            xeroInvoiceId: "xero-inv-1",
+            amountCents: 12000,
+          }),
+        }),
+      }),
+    });
+    expect(mocks.sendAdminBookingChangeRequestAlert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        bookingId: "booking-1",
+        requestId: "request-1",
+        requestedSummary: "check-out to 2026-05-24",
+      })
+    );
+    expect(mocks.logAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "booking-change-request.create",
+        entityId: "request-1",
+        subjectMemberId: "member-1",
+      })
+    );
+  });
+
+  it("rejects request submissions for changes that remain self-service eligible", async () => {
+    mocks.bookingFindUnique.mockResolvedValue(makeBooking());
+
+    const request = new NextRequest(
+      "http://localhost/api/bookings/booking-1/change-requests",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          checkOut: "2026-05-26",
+          reason: "Leaving one day early.",
+        }),
+      }
+    );
+
+    const response = await postBookingChangeRequest(request, {
+      params: Promise.resolve({ id: "booking-1" }),
+    });
+
+    expect(response.status).toBe(400);
+    expect(mocks.bookingChangeRequestCreate).not.toHaveBeenCalled();
+  });
+
+  it("lists pending requests for admins", async () => {
+    mocks.auth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN" } });
+    mocks.bookingChangeRequestFindMany.mockResolvedValue([{ id: "request-1" }]);
+    mocks.bookingChangeRequestCount.mockResolvedValue(1);
+
+    const request = new NextRequest(
+      "http://localhost/api/admin/booking-change-requests?status=PENDING"
+    );
+    const response = await getAdminBookingChangeRequests(request);
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.total).toBe(1);
+    expect(mocks.bookingChangeRequestFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { status: "PENDING" },
+        take: 25,
+      })
+    );
+  });
+
+  it("marks a pending request resolved with audit context", async () => {
+    mocks.auth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN" } });
+    mocks.bookingChangeRequestFindUnique
+      .mockResolvedValueOnce({
+        id: "request-1",
+        status: "PENDING",
+        booking: { id: "booking-1", memberId: "member-1" },
+      })
+      .mockResolvedValueOnce({
+        id: "request-1",
+        status: "RESOLVED",
+        booking: { id: "booking-1", memberId: "member-1" },
+      });
+    mocks.bookingChangeRequestUpdateMany.mockResolvedValue({ count: 1 });
+
+    const request = new NextRequest(
+      "http://localhost/api/admin/booking-change-requests/request-1",
+      {
+        method: "PATCH",
+        headers: {
+          "content-type": "application/json",
+          "x-forwarded-for": "127.0.0.1",
+        },
+        body: JSON.stringify({
+          status: "RESOLVED",
+          adminNotes: "Handled manually through the booking edit flow.",
+        }),
+      }
+    );
+
+    const response = await patchAdminBookingChangeRequest(request, {
+      params: Promise.resolve({ id: "request-1" }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(mocks.bookingChangeRequestUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "request-1", status: "PENDING" },
+        data: expect.objectContaining({
+          status: "RESOLVED",
+          adminNotes: "Handled manually through the booking edit flow.",
+          reviewedById: "admin-1",
+        }),
+      })
+    );
+    expect(mocks.logAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "booking-change-request.resolve",
+        subjectMemberId: "member-1",
+      })
+    );
+  });
+
+  it("returns a member's booking change requests for their booking", async () => {
+    mocks.bookingFindUnique.mockResolvedValue({ memberId: "member-1" });
+    mocks.bookingChangeRequestFindMany.mockResolvedValue([{ id: "request-1" }]);
+
+    const request = new NextRequest(
+      "http://localhost/api/bookings/booking-1/change-requests"
+    );
+    const response = await getMemberBookingChangeRequests(request, {
+      params: Promise.resolve({ id: "booking-1" }),
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toEqual([{ id: "request-1" }]);
+    expect(mocks.bookingChangeRequestFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { bookingId: "booking-1" },
+      })
+    );
+  });
+});
