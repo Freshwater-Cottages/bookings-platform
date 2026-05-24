@@ -566,6 +566,8 @@ model BookingGuest {
   ageTier    AgeTier
   isMember   Boolean   @default(false)
   memberId   String?
+  stayStart  DateTime  @db.Date
+  stayEnd    DateTime  @db.Date
   priceCents Int
   arrivedAt  DateTime?
   departedAt DateTime?
@@ -578,6 +580,8 @@ model BookingGuest {
   choreTokens      GuestChoreToken[]
 
   @@index([bookingId])
+  @@index([bookingId, stayStart, stayEnd])
+  @@index([stayStart, stayEnd])
   @@index([memberId])
 }
 
