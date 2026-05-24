@@ -4,6 +4,7 @@ import { NextRequest } from "next/server";
 const mocks = vi.hoisted(() => ({
   auth: vi.fn(),
   requireActiveSessionUser: vi.fn().mockResolvedValue(null),
+  requireAdmin: vi.fn(),
   bookingFindUnique: vi.fn(),
   bookingChangeRequestFindFirst: vi.fn(),
   bookingChangeRequestCreate: vi.fn(),
@@ -23,6 +24,7 @@ vi.mock("@/lib/auth", () => ({
 
 vi.mock("@/lib/session-guards", () => ({
   requireActiveSessionUser: mocks.requireActiveSessionUser,
+  requireAdmin: mocks.requireAdmin,
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -120,6 +122,10 @@ describe("booking change requests", () => {
       user: { id: "member-1", role: "MEMBER" },
     });
     mocks.requireActiveSessionUser.mockResolvedValue(null);
+    mocks.requireAdmin.mockResolvedValue({
+      ok: true,
+      session: { user: { id: "admin-1", role: "ADMIN" } },
+    });
     mocks.checkRateLimit.mockReturnValue({
       success: true,
       limit: 5,
