@@ -209,6 +209,14 @@ export async function POST(
         { status: 400 }
       );
     }
+  } else if (
+    session.user.role !== "ADMIN" &&
+    normalizeDateOnlyForTimeZone(requestedCheckIn) <= editPolicy.today
+  ) {
+    return NextResponse.json(
+      { error: "NZ today and earlier are locked for self-service changes" },
+      { status: 400 }
+    );
   }
 
   const newCheckIn = isInProgressEdit ? booking.checkIn : requestedCheckIn;

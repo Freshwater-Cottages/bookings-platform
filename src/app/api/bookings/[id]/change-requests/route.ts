@@ -1,0 +1,389 @@
+import { NextRequest, NextResponse } from "next/server";
+import type { AgeTier } from "@prisma/client";
+import { auth } from "@/lib/auth";
+import { logAudit } from "@/lib/audit";
+import { getBookingEditPolicy } from "@/lib/booking-edit-policy";
+import { formatDateOnly, normalizeDateOnlyForTimeZone, parseDateOnly } from "@/lib/date-only";
+import { prisma } from "@/lib/prisma";
+import { requireActiveSessionUser } from "@/lib/session-guards";
+import { sendAdminBookingChangeRequestAlert } from "@/lib/email";
+import { ageTierEnum } from "@/lib/age-tier-schema";
+import { nameField } from "@/lib/zod-helpers";
+import logger from "@/lib/logger";
+import { z } from "zod";
+
+const createChangeRequestSchema = z.object({
+  checkIn: z.string().optional(),
+  checkOut: z.string().optional(),
+  addGuests: z
+    .array(
+      z.object({
+        firstName: nameField(),
+        lastName: nameField(),
+        ageTier: ageTierEnum,
+        isMember: z.boolean(),
+        memberId: z.string().min(1).optional(),
+      })
+    )
+    .optional(),
+  removeGuestIds: z.array(z.string()).optional(),
+  requestedEffectiveDate: z.string().optional(),
+  reason: z.string().max(2000).optional(),
+});
+
+function normalizeOptionalDateOnly(value: string | undefined) {
+  if (!value) return null;
+  const parsed = parseDateOnly(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function normalizeReason(value: string | undefined) {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
+}
+
+function formatBookingDate(value: Date) {
+  return formatDateOnly(normalizeDateOnlyForTimeZone(value));
+}
+
+function changedDate(
+  requestedValue: string | undefined,
+  currentValue: Date
+) {
+  return requestedValue && requestedValue !== formatBookingDate(currentValue);
+}
+
+function requestTouchesLockedPeriod({
+  booking,
+  editPolicy,
+  requestedCheckIn,
+  requestedCheckOut,
+  requestedEffectiveDate,
+}: {
+  booking: { checkIn: Date; checkOut: Date };
+  editPolicy: ReturnType<typeof getBookingEditPolicy>;
+  requestedCheckIn: Date | null;
+  requestedCheckOut: Date | null;
+  requestedEffectiveDate: Date | null;
+}) {
+  const today = editPolicy.today;
+  const editableFrom = editPolicy.editableFrom;
+  const currentCheckIn = normalizeDateOnlyForTimeZone(booking.checkIn);
+  const currentCheckOut = normalizeDateOnlyForTimeZone(booking.checkOut);
+
+  if (requestedEffectiveDate && requestedEffectiveDate <= today) {
+    return true;
+  }
+
+  if (requestedCheckIn && requestedCheckIn.getTime() !== currentCheckIn.getTime()) {
+    return requestedCheckIn <= today || editPolicy.mode === "in-progress";
+  }
+
+  if (requestedCheckOut && requestedCheckOut.getTime() !== currentCheckOut.getTime()) {
+    if (editableFrom) {
+      return requestedCheckOut < editableFrom;
+    }
+    return requestedCheckOut <= today;
+  }
+
+  return false;
+}
+
+function buildRequestedSummary({
+  checkIn,
+  checkOut,
+  addGuests,
+  removedGuests,
+  requestedEffectiveDate,
+}: {
+  checkIn?: string;
+  checkOut?: string;
+  addGuests?: Array<{ firstName: string; lastName: string; ageTier: AgeTier; isMember: boolean }>;
+  removedGuests: Array<{ firstName: string; lastName: string }>;
+  requestedEffectiveDate?: string;
+}) {
+  const parts: string[] = [];
+  if (checkIn) parts.push(`check-in to ${checkIn}`);
+  if (checkOut) parts.push(`check-out to ${checkOut}`);
+  if (addGuests?.length) {
+    parts.push(
+      `add ${addGuests.map((guest) => `${guest.firstName} ${guest.lastName}`).join(", ")}`
+    );
+  }
+  if (removedGuests.length) {
+    parts.push(
+      `remove ${removedGuests.map((guest) => `${guest.firstName} ${guest.lastName}`).join(", ")}`
+    );
+  }
+  if (requestedEffectiveDate) {
+    parts.push(`effective ${requestedEffectiveDate}`);
+  }
+  return parts.length ? parts.join("; ") : "Locked-period booking change";
+}
+
+export async function POST(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const session = await auth();
+  if (!session?.user) {
+    return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
+  }
+  const inactiveResponse = await requireActiveSessionUser(session.user.id);
+  if (inactiveResponse) return inactiveResponse;
+
+  const { id: bookingId } = await params;
+  const booking = await prisma.booking.findUnique({
+    where: { id: bookingId },
+    include: {
+      guests: true,
+      member: true,
+      payment: {
+        select: {
+          id: true,
+          amountCents: true,
+          refundedAmountCents: true,
+          status: true,
+          stripePaymentIntentId: true,
+          xeroInvoiceId: true,
+          xeroInvoiceNumber: true,
+        },
+      },
+    },
+  });
+
+  if (!booking) {
+    return NextResponse.json({ error: "Booking not found" }, { status: 404 });
+  }
+
+  if (booking.memberId !== session.user.id && session.user.role !== "ADMIN") {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  const parsed = createChangeRequestSchema.safeParse(await req.json());
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Validation failed", details: parsed.error.flatten() },
+      { status: 400 }
+    );
+  }
+
+  const {
+    checkIn,
+    checkOut,
+    addGuests,
+    removeGuestIds,
+    requestedEffectiveDate,
+    reason,
+  } = parsed.data;
+  const hasRequestedChange =
+    changedDate(checkIn, booking.checkIn) ||
+    changedDate(checkOut, booking.checkOut) ||
+    Boolean(addGuests?.length) ||
+    Boolean(removeGuestIds?.length) ||
+    Boolean(requestedEffectiveDate);
+
+  if (!hasRequestedChange) {
+    return NextResponse.json(
+      { error: "At least one booking change is required" },
+      { status: 400 }
+    );
+  }
+
+  const requestedCheckIn = normalizeOptionalDateOnly(checkIn);
+  const requestedCheckOut = normalizeOptionalDateOnly(checkOut);
+  const effectiveDate = normalizeOptionalDateOnly(requestedEffectiveDate);
+  if (
+    (checkIn && !requestedCheckIn) ||
+    (checkOut && !requestedCheckOut) ||
+    (requestedEffectiveDate && !effectiveDate)
+  ) {
+    return NextResponse.json({ error: "Invalid booking date" }, { status: 400 });
+  }
+
+  const editPolicy = getBookingEditPolicy({
+    status: booking.status,
+    role: session.user.role,
+    checkIn: booking.checkIn,
+    checkOut: booking.checkOut,
+  });
+  const touchesLockedPeriod = requestTouchesLockedPeriod({
+    booking,
+    editPolicy,
+    requestedCheckIn,
+    requestedCheckOut,
+    requestedEffectiveDate: effectiveDate,
+  });
+
+  if (!touchesLockedPeriod) {
+    return NextResponse.json(
+      {
+        error:
+          "Booking change requests are for NZ today or past-night changes that require admin review",
+      },
+      { status: 400 }
+    );
+  }
+
+  const existing = await prisma.bookingChangeRequest.findFirst({
+    where: {
+      bookingId,
+      requesterId: session.user.id,
+      status: "PENDING",
+    },
+    select: { id: true },
+  });
+
+  if (existing) {
+    return NextResponse.json(
+      { error: "A booking change request is already pending for this booking" },
+      { status: 409 }
+    );
+  }
+
+  const removeSet = new Set(removeGuestIds ?? []);
+  const removedGuests = booking.guests
+    .filter((guest) => removeSet.has(guest.id))
+    .map((guest) => ({
+      id: guest.id,
+      firstName: guest.firstName,
+      lastName: guest.lastName,
+      ageTier: guest.ageTier,
+      isMember: guest.isMember,
+      memberId: guest.memberId,
+      stayStart: formatBookingDate(guest.stayStart),
+      stayEnd: formatBookingDate(guest.stayEnd),
+    }));
+  const requestedSummary = buildRequestedSummary({
+    checkIn,
+    checkOut,
+    addGuests,
+    removedGuests,
+    requestedEffectiveDate,
+  });
+  const normalizedReason = normalizeReason(reason);
+  const changeRequest = await prisma.bookingChangeRequest.create({
+    data: {
+      bookingId,
+      requesterId: session.user.id,
+      requestedChanges: {
+        original: {
+          checkIn: formatBookingDate(booking.checkIn),
+          checkOut: formatBookingDate(booking.checkOut),
+          guests: booking.guests.map((guest) => ({
+            id: guest.id,
+            firstName: guest.firstName,
+            lastName: guest.lastName,
+            ageTier: guest.ageTier,
+            isMember: guest.isMember,
+            memberId: guest.memberId,
+            stayStart: formatBookingDate(guest.stayStart),
+            stayEnd: formatBookingDate(guest.stayEnd),
+          })),
+        },
+        requested: {
+          checkIn: checkIn ?? null,
+          checkOut: checkOut ?? null,
+          addGuests: addGuests ?? [],
+          removeGuests: removedGuests,
+          requestedEffectiveDate: requestedEffectiveDate ?? null,
+          summary: requestedSummary,
+        },
+        lockedPeriod: {
+          today: formatDateOnly(editPolicy.today),
+          editableFrom: editPolicy.editableFrom
+            ? formatDateOnly(editPolicy.editableFrom)
+            : null,
+          touchesLockedPeriod,
+        },
+        payment: booking.payment
+          ? {
+              id: booking.payment.id,
+              amountCents: booking.payment.amountCents,
+              refundedAmountCents: booking.payment.refundedAmountCents,
+              status: booking.payment.status,
+              stripePaymentIntentId: booking.payment.stripePaymentIntentId,
+              xeroInvoiceId: booking.payment.xeroInvoiceId,
+              xeroInvoiceNumber: booking.payment.xeroInvoiceNumber,
+            }
+          : null,
+      },
+      reason: normalizedReason,
+    },
+  });
+
+  logAudit({
+    action: "booking-change-request.create",
+    memberId: session.user.id,
+    targetId: bookingId,
+    subjectMemberId: booking.memberId,
+    entityType: "BookingChangeRequest",
+    entityId: changeRequest.id,
+    category: "booking",
+    outcome: "success",
+    summary: "Booking change request submitted",
+    details: requestedSummary,
+    metadata: {
+      bookingId,
+      requestId: changeRequest.id,
+      requestedSummary,
+      touchesLockedPeriod,
+    },
+    ipAddress: req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown",
+  });
+
+  sendAdminBookingChangeRequestAlert({
+    memberName: `${booking.member.firstName} ${booking.member.lastName}`,
+    memberEmail: booking.member.email,
+    bookingId,
+    checkIn: booking.checkIn,
+    checkOut: booking.checkOut,
+    requestedSummary,
+    reason: normalizedReason,
+    requestId: changeRequest.id,
+  }).catch((err) =>
+    logger.error(
+      { err, bookingId, requestId: changeRequest.id },
+      "Failed to send booking change request admin alert"
+    )
+  );
+
+  return NextResponse.json(changeRequest, { status: 201 });
+}
+
+export async function GET(
+  _req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const session = await auth();
+  if (!session?.user) {
+    return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
+  }
+  const inactiveResponse = await requireActiveSessionUser(session.user.id);
+  if (inactiveResponse) return inactiveResponse;
+
+  const { id: bookingId } = await params;
+  const booking = await prisma.booking.findUnique({
+    where: { id: bookingId },
+    select: { memberId: true },
+  });
+
+  if (!booking) {
+    return NextResponse.json({ error: "Booking not found" }, { status: 404 });
+  }
+
+  if (booking.memberId !== session.user.id && session.user.role !== "ADMIN") {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  const requests = await prisma.bookingChangeRequest.findMany({
+    where: { bookingId },
+    include: {
+      requester: { select: { id: true, firstName: true, lastName: true, email: true } },
+      reviewedBy: { select: { id: true, firstName: true, lastName: true } },
+    },
+    orderBy: { createdAt: "desc" },
+  });
+
+  return NextResponse.json(requests);
+}

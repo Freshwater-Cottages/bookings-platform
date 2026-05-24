@@ -1643,6 +1643,39 @@ Triggers and frequency:
 - Member submits a refund appeal for an eligible cancelled booking.
 - Sent to opted-in admins once per submitted refund request.
 
+### admin-booking-change-request
+
+Subject:
+
+```text
+Booking Change Request: {{memberName}}
+```
+
+Body:
+
+```text
+Booking Change Request Submitted
+
+{{memberName}} has requested an admin-reviewed booking change for a locked same-day or past-night period.
+
+Member: {{memberName}}
+Email: {{memberEmail}}
+Booking: {{bookingId}}
+Current check-in: {{checkIn}}
+Current check-out: {{checkOut}}
+Requested change: {{requestedSummary}}
+
+Reason: {{reason}} [only when reason exists]
+
+Review Request: {{reviewUrl}}
+```
+
+Triggers and frequency:
+
+- Member or admin submits a booking change request for locked same-day or
+  past-night booking changes.
+- Sent to opted-in admins once per submitted booking change request.
+
 ### refund-request-resolved
 
 Approved subject:

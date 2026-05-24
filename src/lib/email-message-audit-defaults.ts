@@ -194,6 +194,10 @@ export const EMAIL_AUDIT_DEFAULTS = {
     "defaultSubject": "Refund Appeal: {{memberName}}",
     "defaultBody": "Refund Appeal Submitted\n\n{{memberName}} has submitted a refund appeal.\n\nMember: {{memberName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nPaid: ${{paidAmount}}\nAlready Refunded: ${{refundedAmount}}\nRemaining: ${{remainingAmount}}\nRequested: ${{requestedAmount}} [only when requestedAmountCents is truthy]\n\n{{reason}}\n\nReview Appeal: {{BASE_URL}}/admin/refund-requests"
   },
+  "admin-booking-change-request": {
+    "defaultSubject": "Booking Change Request: {{memberName}}",
+    "defaultBody": "Booking Change Request Submitted\n\n{{memberName}} has requested an admin-reviewed booking change for a locked same-day or past-night period.\n\nMember: {{memberName}}\nEmail: {{memberEmail}}\nBooking: {{bookingId}}\nCurrent check-in: {{checkIn}}\nCurrent check-out: {{checkOut}}\nRequested change: {{requestedSummary}}\n\nReason: {{reason}} [only when reason exists]\n\nReview Request: {{reviewUrl}}"
+  },
   "refund-request-resolved": {
     "defaultSubject": "Refund Appeal Approved — {{CLUB_BOOKINGS_NAME}}",
     "defaultBody": "Refund Appeal Approved\n\nHi {{firstName}},\n\nYour refund appeal for your booking ({{checkIn}} - {{checkOut}}) has been approved. A refund of {{amount}} will be processed to your original payment method.\n\nNotes:\n{{adminNotes}} [only when adminNotes exists]\n\nIf you have questions, contact the club at {{SUPPORT_EMAIL}}."

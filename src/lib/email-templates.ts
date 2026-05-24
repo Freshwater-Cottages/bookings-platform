@@ -1724,6 +1724,32 @@ export function adminRefundRequestTemplate(data: {
   `);
 }
 
+export function adminBookingChangeRequestTemplate(data: {
+  memberName: string;
+  memberEmail: string;
+  bookingId: string;
+  checkIn: Date;
+  checkOut: Date;
+  requestedSummary: string;
+  reason: string | null;
+  reviewUrl: string;
+}): string {
+  return layout(`
+    ${heading("Booking Change Request Submitted")}
+    ${paragraph(escapeHtml(data.memberName) + " has requested an admin-reviewed booking change for a locked same-day or past-night period.")}
+    ${infoTable([
+      { label: "Member", value: escapeHtml(data.memberName) },
+      { label: "Email", value: escapeHtml(data.memberEmail) },
+      { label: "Booking", value: escapeHtml(data.bookingId) },
+      { label: "Current check-in", value: formatNZDate(data.checkIn) },
+      { label: "Current check-out", value: formatNZDate(data.checkOut) },
+      { label: "Requested change", value: escapeHtml(data.requestedSummary) },
+    ])}
+    ${data.reason ? alertBox(escapeHtml(data.reason), "info") : ""}
+    ${button("Review Request", data.reviewUrl)}
+  `);
+}
+
 export function adminIssueReportTemplate(data: {
   memberName: string;
   memberEmail: string;

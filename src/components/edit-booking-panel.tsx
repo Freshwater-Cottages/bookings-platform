@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatCents } from "@/lib/utils";
 import { getAgeTierLabel, useAgeTierOptions } from "@/lib/use-age-tier-options";
@@ -85,6 +86,14 @@ interface QuoteResult {
   nightDetails?: { date: string; availableBeds: number }[];
 }
 
+function previousDateOnly(dateString: string | null) {
+  if (!dateString) return null;
+  const date = new Date(`${dateString}T00:00:00.000Z`);
+  if (Number.isNaN(date.getTime())) return null;
+  date.setUTCDate(date.getUTCDate() - 1);
+  return date.toISOString().slice(0, 10);
+}
+
 export function EditBookingPanel({
   booking,
   onDone,
@@ -120,6 +129,10 @@ export function EditBookingPanel({
   // Save state
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
+  const [requestReason, setRequestReason] = useState("");
+  const [requestSubmitting, setRequestSubmitting] = useState(false);
+  const [requestError, setRequestError] = useState("");
+  const [requestSuccess, setRequestSuccess] = useState("");
 
   const today = new Date().toISOString().split("T")[0];
   const minEditableDate = booking.editPolicy.editableFrom ?? today;
@@ -163,6 +176,40 @@ export function EditBookingPanel({
   // Debounced quote fetch
   const quoteTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
+  const buildModificationPayload = useCallback(() => {
+    const body: Record<string, unknown> = {};
+
+    if (checkIn !== booking.checkIn) body.checkIn = checkIn;
+    if (checkOut !== booking.checkOut) body.checkOut = checkOut;
+    if (addedGuests.length > 0) {
+      body.addGuests = addedGuests.map((g) => ({
+        firstName: g.firstName,
+        lastName: g.lastName,
+        ageTier: g.ageTier,
+        isMember: g.isMember,
+        memberId: g.memberId,
+      }));
+    }
+    if (removedGuestIds.size > 0) {
+      body.removeGuestIds = Array.from(removedGuestIds);
+    }
+    if (promoAction.type === "remove") {
+      body.removePromoCode = true;
+    } else if (promoAction.type === "new") {
+      body.promoCode = promoAction.code;
+    }
+
+    return body;
+  }, [
+    addedGuests,
+    booking.checkIn,
+    booking.checkOut,
+    checkIn,
+    checkOut,
+    promoAction,
+    removedGuestIds,
+  ]);
+
   const fetchQuote = useCallback(async () => {
     if (!hasChanges) {
       setQuote(null);
@@ -173,27 +220,7 @@ export function EditBookingPanel({
     setQuoteLoading(true);
 
     try {
-      const body: Record<string, unknown> = {};
-
-      if (checkIn !== booking.checkIn) body.checkIn = checkIn;
-      if (checkOut !== booking.checkOut) body.checkOut = checkOut;
-      if (addedGuests.length > 0) {
-        body.addGuests = addedGuests.map((g) => ({
-          firstName: g.firstName,
-          lastName: g.lastName,
-          ageTier: g.ageTier,
-          isMember: g.isMember,
-          memberId: g.memberId,
-        }));
-      }
-      if (removedGuestIds.size > 0) {
-        body.removeGuestIds = Array.from(removedGuestIds);
-      }
-      if (promoAction.type === "remove") {
-        body.removePromoCode = true;
-      } else if (promoAction.type === "new") {
-        body.promoCode = promoAction.code;
-      }
+      const body = buildModificationPayload();
 
       const res = await fetch(`/api/bookings/${booking.id}/modify-quote`, {
         method: "POST",
@@ -214,7 +241,7 @@ export function EditBookingPanel({
     } finally {
       setQuoteLoading(false);
     }
-  }, [booking.id, booking.checkIn, booking.checkOut, checkIn, checkOut, addedGuests, removedGuestIds, promoAction, hasChanges]);
+  }, [booking.id, buildModificationPayload, hasChanges]);
 
   // Auto-fetch quote when changes happen (debounced)
   useEffect(() => {
@@ -295,27 +322,7 @@ export function EditBookingPanel({
     setSaving(true);
 
     try {
-      const body: Record<string, unknown> = {};
-
-      if (checkIn !== booking.checkIn) body.checkIn = checkIn;
-      if (checkOut !== booking.checkOut) body.checkOut = checkOut;
-      if (addedGuests.length > 0) {
-        body.addGuests = addedGuests.map((g) => ({
-          firstName: g.firstName,
-          lastName: g.lastName,
-          ageTier: g.ageTier,
-          isMember: g.isMember,
-          memberId: g.memberId,
-        }));
-      }
-      if (removedGuestIds.size > 0) {
-        body.removeGuestIds = Array.from(removedGuestIds);
-      }
-      if (promoAction.type === "remove") {
-        body.removePromoCode = true;
-      } else if (promoAction.type === "new") {
-        body.promoCode = promoAction.code;
-      }
+      const body = buildModificationPayload();
 
       const res = await fetch(`/api/bookings/${booking.id}/modify`, {
         method: "PUT",
@@ -338,7 +345,52 @@ export function EditBookingPanel({
     }
   }
 
+  async function handleSubmitChangeRequest() {
+    setRequestError("");
+    setRequestSuccess("");
+    setRequestSubmitting(true);
+
+    try {
+      const body = buildModificationPayload();
+      if (!hasChanges) {
+        body.requestedEffectiveDate =
+          previousDateOnly(booking.editPolicy.editableFrom) ?? today;
+      }
+
+      const res = await fetch(`/api/bookings/${booking.id}/change-requests`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...body,
+          reason: requestReason.trim() || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setRequestError(data.error || "Failed to submit request");
+        return;
+      }
+
+      setRequestReason("");
+      setRequestSuccess("Request sent to admins");
+    } catch {
+      setRequestError("Failed to submit request");
+    } finally {
+      setRequestSubmitting(false);
+    }
+  }
+
+  function isLockedChangeError(message: string) {
+    return /locked|in-progress|check-in cannot be changed/i.test(message);
+  }
+
   const totalGuestCount = remainingGuests.length + addedGuests.length;
+  const showChangeRequestPath =
+    (booking.editPolicy.mode === "in-progress" && !hasChanges) ||
+    (hasChanges &&
+      (booking.editPolicy.mode === "future" ||
+        booking.editPolicy.mode === "in-progress") &&
+      (isLockedChangeError(quoteError) || isLockedChangeError(saveError)));
 
   return (
     <div className="space-y-6">
@@ -737,6 +789,43 @@ export function EditBookingPanel({
                     Your promo code &apos;{booking.promo.code}&apos; is no longer valid and will be removed.
                   </div>
                 )}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {showChangeRequestPath && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Admin Request</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="space-y-1">
+              <Label htmlFor="change-request-reason">Requested change</Label>
+              <Textarea
+                id="change-request-reason"
+                value={requestReason}
+                maxLength={2000}
+                onChange={(event) => setRequestReason(event.target.value)}
+              />
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={handleSubmitChangeRequest}
+              disabled={requestSubmitting || (!hasChanges && !requestReason.trim())}
+            >
+              {requestSubmitting ? "Sending..." : "Request Admin Review"}
+            </Button>
+            {requestError && (
+              <div className="rounded-md bg-red-50 p-3 text-sm text-red-700">
+                {requestError}
+              </div>
+            )}
+            {requestSuccess && (
+              <div className="rounded-md bg-green-50 p-3 text-sm text-green-700">
+                {requestSuccess}
               </div>
             )}
           </CardContent>
