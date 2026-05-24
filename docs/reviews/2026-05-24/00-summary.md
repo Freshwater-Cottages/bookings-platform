@@ -53,12 +53,51 @@
 - `05-stripe-xero.md`
 - `06-best-practices.md` - recommendations for ongoing process discipline
 
-## Next steps
+## Issue index
 
-GitHub issues opened on `thatskiff33/AlpineClubBookingsNZ`, one per actionable finding (with related low/cosmetic findings grouped into per-track polish sweeps). Labels:
+31 GitHub issues opened on `thatskiff33/AlpineClubBookingsNZ`, labelled `audit-2026-05-24` plus `critical` / `high` / `medium` / `low` and `bug` or `enhancement`. Filter: https://github.com/thatskiff33/AlpineClubBookingsNZ/issues?q=is%3Aissue+label%3Aaudit-2026-05-24
 
-- `severity:critical` / `severity:high` / `severity:medium` / `severity:low`
-- `review:consistency` / `review:code-quality` / `review:hardening` / `review:security` / `review:stripe`
-- Feature commit short-SHA where applicable
+### Critical (2)
+
+- [#477](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/477) Atomic claim for membership cancellation confirmation tokens
+- [#478](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/478) Define Stripe refund handling for paid membership cancellations
+
+### High (10)
+
+- [#479](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/479) Add dedicated `adminBookingChangeRequest` notification preference key
+- [#480](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/480) Split 1069-line PUT handler in booking modify route
+- [#481](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/481) Member delete approval needs serialisable isolation or advisory lock
+- [#482](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/482) Archive approval not idempotent under retry
+- [#483](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/483) Booking modify Stripe refund failure should enqueue recovery
+- [#484](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/484) CHECK constraint for `BookingGuest` stay range
+- [#485](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/485) Document and alert on payment recovery cron scheduler dependency
+- [#486](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/486) Reconcile abandoned `modify-dates` additional PaymentIntents
+- [#487](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/487) Symmetric zero-dollar superseded-intent cleanup across modify and modify-dates
+- [#488](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/488) Recovery refund double-count risk on DB failure between Stripe call and local update
+
+### Medium (15)
+
+- [#489](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/489) Align `BookingChangeRequest` model with sibling review-queue conventions
+- [#490](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/490) Micro-cleanup pass on booking modify route
+- [#491](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/491) Extract shared member serialization helpers and cancellation include block
+- [#492](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/492) Tighten cancellation settings loader typing and replace silent catch
+- [#493](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/493) Refactor `MemberDeleteEligibility` blocker builder to a declarative table
+- [#494](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/494) Wrap `request.json()` in try/catch in modify and modify-dates routes
+- [#495](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/495) Booking change request resolve should link to executed booking edit
+- [#496](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/496) Add zod validation to `/api/cron/payments` search params
+- [#497](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/497) Re-check candidate eligibility inside cancellation create transaction
+- [#498](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/498) `cleanupArchivedMemberLinks` should return counts for audit log
+- [#499](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/499) Redact confirmation token URLs from server and proxy logs
+- [#500](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/500) Invalidate all `PENDING_CONFIRMATION` rows for a member on confirm/decline
+- [#501](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/501) Handle stale `PROCESSING` recovery operations at max attempts
+- [#502](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/502) Reaper for `WAITING_PAYMENT` Xero outbox operations
+- [#503](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/503) Backfill test coverage for new Stripe and Xero code paths
+
+### Low (4 polish sweeps)
+
+- [#504](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/504) Consistency polish sweep (NZ date helper, label dedup, schema comments)
+- [#505](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/505) Code quality polish sweep (type aliases, magic numbers, single-use exports)
+- [#506](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/506) Hardening polish sweep (date normalisation, confirmation email retry)
+- [#507](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/507) Stripe and Xero polish sweep
 
 After this report and issues, the user will sync changes to the private Tokoroa repo and request a similar pass there.
