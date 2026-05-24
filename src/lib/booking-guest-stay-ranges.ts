@@ -56,15 +56,17 @@ export function isGuestVisibleOnLodgeDate(
 }
 
 export function getActiveGuestsForNight<Guest extends GuestStayRange>(
-  guests: Guest[],
+  guests: Guest[] | null | undefined,
   night: Date,
   booking: BookingStayRange
 ): Guest[] {
-  return guests.filter((guest) => isGuestActiveOnNight(guest, night, booking));
+  return (guests ?? []).filter((guest) =>
+    isGuestActiveOnNight(guest, night, booking)
+  );
 }
 
 export function countActiveGuestsForNight(
-  guests: GuestStayRange[],
+  guests: GuestStayRange[] | null | undefined,
   night: Date,
   booking: BookingStayRange
 ): number {
@@ -72,12 +74,12 @@ export function countActiveGuestsForNight(
 }
 
 export function getLodgeVisibleGuestsForDate<Guest extends GuestStayRange>(
-  guests: Guest[],
+  guests: Guest[] | null | undefined,
   date: Date,
   booking: BookingStayRange,
   options?: { includeDepartureDate?: boolean }
 ): Guest[] {
-  return guests.filter((guest) =>
+  return (guests ?? []).filter((guest) =>
     isGuestVisibleOnLodgeDate(guest, date, booking, options)
   );
 }

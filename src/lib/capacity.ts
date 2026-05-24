@@ -45,20 +45,27 @@ function getNextMonthStartDateOnly(year: number, month: number): Date {
 export function getOccupiedBedsForNight(
   night: Date,
   bookings: Array<{
-    checkIn: Date;
-    checkOut: Date;
-    guests: GuestStayRange[];
+    checkIn?: Date | null;
+    checkOut?: Date | null;
+    guests?: GuestStayRange[] | null;
   }>
 ): number {
   const nightKey = formatDateOnly(night);
   let occupiedBeds = 0;
 
   for (const booking of bookings) {
+    if (!booking.checkIn || !booking.checkOut) {
+      continue;
+    }
+
     const bookingCheckInKey = formatDateOnlyForTimeZone(booking.checkIn);
     const bookingCheckOutKey = formatDateOnlyForTimeZone(booking.checkOut);
 
     if (nightKey >= bookingCheckInKey && nightKey < bookingCheckOutKey) {
-      occupiedBeds += countActiveGuestsForNight(booking.guests, night, booking);
+      occupiedBeds += countActiveGuestsForNight(booking.guests, night, {
+        checkIn: booking.checkIn,
+        checkOut: booking.checkOut,
+      });
     }
   }
 

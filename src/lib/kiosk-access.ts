@@ -169,7 +169,7 @@ export async function getKioskDateRange(
     const guestRanges =
       b.memberId === userId
         ? [{ stayStart: b.checkIn, stayEnd: b.checkOut }]
-        : b.guests;
+        : (b.guests ?? []);
 
     for (const range of guestRanges) {
       // Day-before access

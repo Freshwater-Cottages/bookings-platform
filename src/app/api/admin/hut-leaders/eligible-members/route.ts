@@ -75,11 +75,13 @@ export async function GET(req: NextRequest) {
 
   for (const g of guests) {
     if (!g.memberId || !g.member || !g.member.active) continue;
+    const guestStayStart = g.stayStart ?? g.booking.checkIn;
+    const guestStayEnd = g.stayEnd ?? g.booking.checkOut;
     const existing = memberBookings.get(g.memberId);
     if (existing) {
       // Avoid duplicate booking entries
-      if (!existing.bookings.some((b) => b.checkIn.getTime() === g.stayStart.getTime())) {
-        existing.bookings.push({ checkIn: g.stayStart, checkOut: g.stayEnd });
+      if (!existing.bookings.some((b) => b.checkIn.getTime() === guestStayStart.getTime())) {
+        existing.bookings.push({ checkIn: guestStayStart, checkOut: guestStayEnd });
       }
     } else {
       memberBookings.set(g.memberId, {
@@ -87,7 +89,7 @@ export async function GET(req: NextRequest) {
         firstName: g.member.firstName,
         lastName: g.member.lastName,
         email: g.member.email,
-        bookings: [{ checkIn: g.stayStart, checkOut: g.stayEnd }],
+        bookings: [{ checkIn: guestStayStart, checkOut: guestStayEnd }],
       });
     }
   }

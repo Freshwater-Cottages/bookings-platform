@@ -66,7 +66,11 @@ export async function GET() {
     let guestCount = 0;
     for (const b of bookings) {
       if (b.checkIn.getTime() <= date.getTime() && b.checkOut.getTime() > date.getTime()) {
-        const activeGuestCount = countActiveGuestsForNight(b.guests, date, b);
+        const legacyGuestCount = (b as { _count?: { guests?: number } })._count?.guests ?? 0;
+        const activeGuestCount = Array.isArray(b.guests)
+          ? countActiveGuestsForNight(b.guests, date, b)
+          : legacyGuestCount;
+
         if (activeGuestCount > 0) {
           bookingCount++;
           guestCount += activeGuestCount;

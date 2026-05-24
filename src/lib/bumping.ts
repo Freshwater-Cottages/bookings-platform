@@ -1,5 +1,5 @@
 import { prisma } from "./prisma";
-import { getOccupiedBedsForNight, LODGE_CAPACITY } from "./capacity";
+import { LODGE_CAPACITY } from "./capacity";
 import { BookingStatus, Prisma } from "@prisma/client";
 import { eachDayOfInterval, subDays, format } from "date-fns";
 import { sendBookingBumpedEmail, sendAdminBookingBumpedAlert } from "./email";
@@ -48,7 +48,13 @@ export async function getOccupiedBedsPerNight(
 
   for (const night of nights) {
     const key = format(night, "yyyy-MM-dd");
-    occupiedMap.set(key, getOccupiedBedsForNight(night, overlappingBookings));
+    const activeGuestCount = overlappingBookings.reduce(
+      (total, booking) =>
+        total + countActiveGuestsForNight(booking.guests, night, booking),
+      0
+    );
+
+    occupiedMap.set(key, activeGuestCount);
   }
 
   return occupiedMap;
