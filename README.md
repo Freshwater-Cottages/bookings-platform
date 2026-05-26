@@ -30,7 +30,7 @@ fork for another organisation. See `NOTICE.md`.
 ## Stack
 
 - Next.js 16 App Router, React 19, TypeScript
-- PostgreSQL 16 and Prisma 6
+- PostgreSQL 16 and Prisma 7
 - Auth.js / NextAuth credentials sessions
 - Stripe PaymentIntents, SetupIntents, and webhooks
 - Xero OAuth, webhooks, retry queues, local caches, and metering

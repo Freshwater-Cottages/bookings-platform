@@ -7,8 +7,10 @@ This document describes the public maintenance baseline for AlpineClubBookingsNZ
 Run lightweight local gates before opening or merging application changes:
 
 ```bash
+npm audit --audit-level=high
 npm run lint
-DATABASE_URL=postgresql://user:pass@localhost:5432/tacbookings npx prisma generate
+DATABASE_URL=postgresql://user:pass@localhost:5432/tacbookings npx prisma validate
+npm run db:generate
 DATABASE_URL=postgresql://user:pass@localhost:5432/tacbookings npx tsc --noEmit
 npm test
 npm run quality:report
@@ -117,18 +119,25 @@ Only use `--apply` after the dry-run report has been reviewed. Do not run it
 with live Xero, Stripe, SES, Sentry, or production database credentials during
 exploratory work; use a staging database and Xero demo tenant where possible.
 
-## Public Release Checklist
+## Public Reference Release Checklist
 
-Before changing repository visibility to public:
+Before cutting a public reference release:
 
-1. Confirm `main` has a green local validation run and a green GitHub Actions
-   run.
-2. Run a full-history secret scan.
-3. Confirm `.env`, `.env.local`, production logs, generated reports, `.next`,
-   and database dumps are not tracked.
-4. Enable Dependabot, dependency graph, secret scanning, and branch protection
-   options available to the repository.
-5. Create a release tag for the public reference snapshot.
+1. Create a release-prep branch from fresh `origin/main`.
+2. Update `package.json`, `package-lock.json`, and `CHANGELOG.md` for the
+   release version.
+3. Check `README.md`, `DEPLOYMENT.md`, `CONFIGURATION.md`, this maintenance
+   guide, and `docs/ARCHITECTURE.md` for dependency, release, GHCR, migration,
+   validation, and public/private workflow drift.
+4. Confirm any new or changed migrations that touch hot tables or potentially
+   breaking SQL are represented in `docs/BLUE_GREEN_MIGRATION_SAFETY.tsv`, or
+   document why no ledger entry is needed.
+5. Run local release validation without live provider credentials, then rely on
+   GitHub Actions for Docker image build, static analysis, secret scanning,
+   dependency review, and GHCR publication.
+6. After merge, create the annotated release tag on the merged commit and
+   publish the GitHub release with validation evidence, migration notes, image
+   names, commit SHA, and non-blocking maintainability follow-ups.
 
 ## GitHub Actions Availability
 
