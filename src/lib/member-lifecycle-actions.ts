@@ -296,7 +296,7 @@ const MEMBER_DELETE_BLOCKER_SPECS: readonly BlockerSpec[] = [
     code: "promo_redemptions",
     label: "Promo redemptions exist.",
     query: (db, memberId) =>
-      db.promoRedemption.count({ where: { memberId } }),
+      db.promoRedemptionAllocation.count({ where: { memberId } }),
   },
   {
     code: "promo_assignments",
