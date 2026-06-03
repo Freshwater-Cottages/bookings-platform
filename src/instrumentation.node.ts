@@ -53,7 +53,7 @@ export async function register() {
     const cron = await import("node-cron");
     const Sentry = await import("@sentry/nextjs");
     const { prisma } = await import("./lib/prisma");
-    const { deletePromoRedemptionAndAdjustCount } = await import("./lib/promo");
+    const { deleteDraftBookingDependents } = await import("./lib/draft-booking-cleanup");
     const { isXeroDailyMembershipRefreshEnabled } = await import("./lib/xero-feature-flags");
     const { isEffectiveModuleEnabled } = await import("./lib/admin-modules");
     const optionalCron = getOptionalCronRegistrationState();
@@ -683,25 +683,39 @@ export async function register() {
       isDraftCleanupRunning = true;
       const startedAt = new Date();
       try {
-        const expiredDrafts = await prisma.booking.findMany({
-          where: { status: "DRAFT", draftExpiresAt: { lt: new Date() } },
-          select: { id: true, promoRedemption: { select: { id: true, promoCodeId: true } } },
-        });
-        const deletedDrafts = expiredDrafts.length;
-        if (expiredDrafts.length > 0) {
-          await prisma.$transaction(async (tx) => {
-            for (const draft of expiredDrafts) {
-              if (draft.promoRedemption) {
-                await deletePromoRedemptionAndAdjustCount(tx, draft.promoRedemption);
-              }
-            }
-            await tx.booking.deleteMany({
-              where: { status: "DRAFT", draftExpiresAt: { lt: new Date() } },
-            });
+        const expiredBefore = new Date();
+        const cleanup = await prisma.$transaction(async (tx) => {
+          await tx.$executeRawUnsafe(`SELECT pg_advisory_xact_lock(1)`);
+
+          const expiredDrafts = await tx.booking.findMany({
+            where: { status: "DRAFT", draftExpiresAt: { lt: expiredBefore } },
+            select: {
+              id: true,
+              promoRedemption: { select: { id: true, promoCodeId: true } },
+            },
           });
-        }
-        logger.info({ job: "draft-cleanup", deletedDrafts }, "Draft cleanup complete");
-        await recordCronRun("draft-cleanup", startedAt, "SUCCESS", { deletedDrafts });
+
+          const dependents = await deleteDraftBookingDependents(tx, expiredDrafts);
+          const deleted = dependents.bookingIds.length
+            ? await tx.booking.deleteMany({
+                where: {
+                  id: { in: dependents.bookingIds },
+                  status: "DRAFT",
+                  draftExpiresAt: { lt: expiredBefore },
+                },
+              })
+            : { count: 0 };
+
+          return {
+            deletedDrafts: deleted.count,
+            promoRedemptions: dependents.promoRedemptions,
+            changeRequests: dependents.changeRequests,
+            modifications: dependents.modifications,
+          };
+        });
+
+        logger.info({ job: "draft-cleanup", ...cleanup }, "Draft cleanup complete");
+        await recordCronRun("draft-cleanup", startedAt, "SUCCESS", cleanup);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         logger.error({ err, job: "draft-cleanup" }, "Failed to delete expired draft bookings");

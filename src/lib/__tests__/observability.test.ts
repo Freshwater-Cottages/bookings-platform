@@ -11,9 +11,16 @@ const scheduledCronJobs = vi.hoisted(
 const mockPrisma = vi.hoisted(() => ({
   $queryRawUnsafe: vi.fn(),
   $transaction: vi.fn(),
+  $executeRawUnsafe: vi.fn(),
   member: { count: vi.fn() },
   booking: {
     findMany: vi.fn(),
+    deleteMany: vi.fn(),
+  },
+  bookingChangeRequest: {
+    deleteMany: vi.fn(),
+  },
+  bookingModification: {
     deleteMany: vi.fn(),
   },
   promoCode: {
@@ -457,6 +464,12 @@ describe("OBS-03: cron job run recording", () => {
     vi.mocked(prisma.promoRedemptionAllocation.count).mockResolvedValue(1);
     vi.mocked(prisma.promoRedemption.delete).mockResolvedValue({} as any);
     vi.mocked(prisma.promoCode.update).mockResolvedValue({} as any);
+    vi.mocked(prisma.bookingChangeRequest.deleteMany).mockResolvedValue({
+      count: 0,
+    } as any);
+    vi.mocked(prisma.bookingModification.deleteMany).mockResolvedValue({
+      count: 1,
+    } as any);
     vi.mocked(prisma.booking.deleteMany).mockResolvedValue({ count: 1 } as any);
 
     await draftCleanup.callback();
@@ -469,13 +482,22 @@ describe("OBS-03: cron job run recording", () => {
       data: { currentRedemptions: { decrement: 1 } },
     });
     expect(prisma.booking.deleteMany).toHaveBeenCalledWith({
-      where: { status: "DRAFT", draftExpiresAt: { lt: expect.any(Date) } },
+      where: {
+        id: { in: ["booking-1"] },
+        status: "DRAFT",
+        draftExpiresAt: { lt: expect.any(Date) },
+      },
     });
     expect(prisma.cronJobRun.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
         jobName: "draft-cleanup",
         status: "SUCCESS",
-        resultSummary: { deletedDrafts: 1 },
+        resultSummary: {
+          deletedDrafts: 1,
+          promoRedemptions: 1,
+          changeRequests: 0,
+          modifications: 1,
+        },
       }),
     });
   });
@@ -486,12 +508,17 @@ describe("OBS-03: cron job run recording", () => {
 
     await draftCleanup.callback();
 
-    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(prisma.$transaction).toHaveBeenCalled();
     expect(prisma.cronJobRun.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
         jobName: "draft-cleanup",
         status: "SUCCESS",
-        resultSummary: { deletedDrafts: 0 },
+        resultSummary: {
+          deletedDrafts: 0,
+          promoRedemptions: 0,
+          changeRequests: 0,
+          modifications: 0,
+        },
       }),
     });
 

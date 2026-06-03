@@ -4,7 +4,10 @@ const mocks = vi.hoisted(() => ({
   bookingFindUnique: vi.fn(),
   bookingDelete: vi.fn(),
   bookingUpdate: vi.fn(),
+  bookingChangeRequestDeleteMany: vi.fn(),
+  bookingModificationDeleteMany: vi.fn(),
   promoRedemptionDelete: vi.fn(),
+  promoRedemptionAllocationCount: vi.fn(),
   promoCodeUpdate: vi.fn(),
   paymentTransactionCount: vi.fn(),
   paymentRefundCount: vi.fn(),
@@ -23,8 +26,17 @@ const mockTx = {
     delete: mocks.bookingDelete,
     update: mocks.bookingUpdate,
   },
+  bookingChangeRequest: {
+    deleteMany: mocks.bookingChangeRequestDeleteMany,
+  },
+  bookingModification: {
+    deleteMany: mocks.bookingModificationDeleteMany,
+  },
   promoRedemption: {
     delete: mocks.promoRedemptionDelete,
+  },
+  promoRedemptionAllocation: {
+    count: mocks.promoRedemptionAllocationCount,
   },
   promoCode: {
     update: mocks.promoCodeUpdate,
@@ -59,8 +71,17 @@ vi.mock("@/lib/prisma", () => ({
       delete: mocks.bookingDelete,
       update: mocks.bookingUpdate,
     },
+    bookingChangeRequest: {
+      deleteMany: mocks.bookingChangeRequestDeleteMany,
+    },
+    bookingModification: {
+      deleteMany: mocks.bookingModificationDeleteMany,
+    },
     promoRedemption: {
       delete: mocks.promoRedemptionDelete,
+    },
+    promoRedemptionAllocation: {
+      count: mocks.promoRedemptionAllocationCount,
     },
     promoCode: {
       update: mocks.promoCodeUpdate,
@@ -136,7 +157,10 @@ describe("deleteBooking", () => {
     mocks.createAuditLog.mockResolvedValue(undefined);
     mocks.bookingDelete.mockResolvedValue({});
     mocks.bookingUpdate.mockResolvedValue({});
+    mocks.bookingChangeRequestDeleteMany.mockResolvedValue({ count: 0 });
+    mocks.bookingModificationDeleteMany.mockResolvedValue({ count: 1 });
     mocks.promoRedemptionDelete.mockResolvedValue({});
+    mocks.promoRedemptionAllocationCount.mockResolvedValue(1);
     mocks.promoCodeUpdate.mockResolvedValue({});
     mocks.paymentTransactionCount.mockResolvedValue(0);
     mocks.paymentRefundCount.mockResolvedValue(0);
@@ -194,6 +218,12 @@ describe("deleteBooking", () => {
     expect(mocks.promoCodeUpdate).toHaveBeenCalledWith({
       where: { id: "promo-1" },
       data: { currentRedemptions: { decrement: 1 } },
+    });
+    expect(mocks.bookingChangeRequestDeleteMany).toHaveBeenCalledWith({
+      where: { bookingId: { in: ["booking-1"] } },
+    });
+    expect(mocks.bookingModificationDeleteMany).toHaveBeenCalledWith({
+      where: { bookingId: { in: ["booking-1"] } },
     });
     expect(mocks.bookingDelete).toHaveBeenCalledWith({
       where: { id: "booking-1" },

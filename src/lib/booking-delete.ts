@@ -4,6 +4,7 @@ import {
   type Prisma,
 } from "@prisma/client";
 import { createAuditLog } from "@/lib/audit";
+import { deleteDraftBookingDependents } from "@/lib/draft-booking-cleanup";
 import { prisma } from "@/lib/prisma";
 
 type BookingDeleteDb = Prisma.TransactionClient | typeof prisma;
@@ -135,15 +136,7 @@ async function hardDeleteDraftBooking(
       tx
     );
 
-    if (booking.promoRedemption) {
-      await tx.promoRedemption.delete({
-        where: { id: booking.promoRedemption.id },
-      });
-      await tx.promoCode.update({
-        where: { id: booking.promoRedemption.promoCodeId },
-        data: { currentRedemptions: { decrement: 1 } },
-      });
-    }
+    await deleteDraftBookingDependents(tx, [booking]);
 
     await tx.booking.delete({ where: { id: booking.id } });
 
