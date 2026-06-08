@@ -361,6 +361,7 @@ describe("AdminBookingsPage", () => {
     expect(html).toContain("Aroha Ngata");
     expect(html).toContain("Changes");
     expect(html).not.toContain("/admin/bed-allocation");
+    expect(html).not.toContain("bedState=unallocated");
     expect(html).not.toContain(">Beds<");
     expect(html).not.toContain("Unallocated");
   });

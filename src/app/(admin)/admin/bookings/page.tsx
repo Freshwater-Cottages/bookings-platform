@@ -61,21 +61,22 @@ export default async function AdminBookingsPage({
   const { bookings, total, sortBy, sortDir } = await listAdminBookings(query, {
     bedAllocationEnabled: showBedAllocation,
   });
-  const currentSearchParams = new URLSearchParams();
-  for (const [key, value] of Object.entries(params)) {
-    if (typeof value === "string" && value) {
-      currentSearchParams.set(key, value);
+
+  function visibleSearchParams() {
+    const currentSearchParams = new URLSearchParams();
+    for (const [key, value] of Object.entries(params)) {
+      if (typeof value === "string" && value && (showBedAllocation || key !== "bedState")) {
+        currentSearchParams.set(key, value);
+      }
     }
+
+    return currentSearchParams;
   }
+  const currentSearchParams = visibleSearchParams();
   const currentBookingsPath = buildPathWithSearch("/admin/bookings", currentSearchParams);
 
   function sortHref(column: BookingSortBy) {
-    const nextParams = new URLSearchParams();
-    for (const [key, value] of Object.entries(params)) {
-      if (typeof value === "string" && value) {
-        nextParams.set(key, value);
-      }
-    }
+    const nextParams = visibleSearchParams();
 
     const nextDir: SortDir = sortBy === column
       ? sortDir === "asc" ? "desc" : "asc"
