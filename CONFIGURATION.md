@@ -40,7 +40,7 @@ does not store API keys, OAuth secrets, SMTP secrets, or bearer tokens.
 | `socialLinks.facebook` | no | Facebook URL used by public pages/footer. |
 | `beds[].id` | yes | Stable bed or lodge identifier. |
 | `beds[].name` | yes | User-facing bed/lodge name. |
-| `beds[].capacity` | yes | Positive integer capacity. |
+| `beds[].capacity` | yes | Positive integer fallback/import capacity. |
 | `beds[].type` | yes | One of `dormitory`, `private`, or `shared`. |
 | `ageTiers[].id` | yes | One of `INFANT`, `CHILD`, `YOUTH`, or `ADULT`. |
 | `ageTiers[].label` | yes | User-facing age-tier label. |
@@ -52,6 +52,13 @@ does not store API keys, OAuth secrets, SMTP secrets, or bearer tokens.
 | `ageTiers[].nightlyRates.winter.nonMemberCents` | yes | Winter non-member nightly rate in integer cents. |
 | `ageTiers[].nightlyRates.summer.memberCents` | yes | Summer member nightly rate in integer cents. |
 | `ageTiers[].nightlyRates.summer.nonMemberCents` | yes | Summer non-member nightly rate in integer cents. |
+
+When the bed allocation module is effectively enabled and at least one active
+bed exists in Admin -> Configuration -> Rooms & Beds, booking capacity is the
+active bed count from that configurator. If the module is disabled, or the
+module is enabled but no active beds exist yet, the system falls back to the
+`beds[].capacity` total in `config/club.json`. Use the Rooms & Beds import
+action to seed the configurator from `config/club.json` during transition.
 
 Keep all money values in integer cents.
 
@@ -69,6 +76,32 @@ Replace the default assets in `public/branding/`:
 - `sunset.jpg`
 
 The matching `*.example.*` files are placeholders for forks and public docs.
+
+## Website Page Content
+
+Public website pages are database-backed (`PageContent`) and edited in
+Admin > Page Content. The website header menu is generated from each page's
+menu title and menu order; pages with an empty menu title stay out of the
+menu.
+
+- Seeding creates starter pages (`home`, `about`, `join`, `join/apply`,
+  `rules`, `contact`, `committee`) only when they do not already exist, so
+  re-running the seed never overwrites edited content.
+- The home route (`/`) renders the `home` page record. `/contact`, `/join`,
+  and `/join/apply` are code-backed routes that render their matching
+  record; all other records are served by the dynamic catch-all route.
+- Slugs use lowercase letters, numbers, and hyphens, with optional forward
+  slashes between segments (`trip-reports`, `trips/2026`). Application
+  route names (`admin`, `api`, `book`, `dashboard`, `login`, and similar)
+  are reserved and rejected in every segment position.
+- Page HTML supports embed tokens that render interactive sections:
+  `{{committee-members-cards}}`, `{{member-application-form}}`, and
+  `{{contact-form}}`.
+- Content and header HTML are sanitised on save and again on render. The
+  allowlist lives in `src/lib/page-content-html.ts`.
+- The editor's image picker lists images deployed under `public/branding/`
+  only. There is no upload from the admin UI; add images by committing
+  them to the repository.
 
 ## Required Local Setup Variables
 
