@@ -64,9 +64,14 @@ Keep all money values in integer cents.
 
 ## Branding Assets
 
-Replace the default assets in `public/branding/`:
+Public website colours, fonts, and the logo are managed by administrators at
+`/admin/site-style`. Fresh deployments show a neutral setup holding page until
+an admin finishes that wizard. The logo is stored in the database as a validated
+image data URL; there is no runtime upload directory to preserve.
 
-- `logo.png`
+The remaining public image assets are still file-based. Replace the default
+assets in `public/branding/`:
+
 - `favicon.ico`
 - `favicon.png`
 - `og-image.png`
@@ -76,6 +81,13 @@ Replace the default assets in `public/branding/`:
 - `sunset.jpg`
 
 The matching `*.example.*` files are placeholders for forks and public docs.
+
+Existing Tokoroa deployments can preserve the former look during the transition
+by running the seed with `SEED_TOKOROA_THEME_COMPLETE=1`. That path records the
+current palette (`#ffcb05`, `#4d4d46`, `#2f2f2b`, `#6a6a63`, `#d9d5c2`,
+`#f7f5ed`, `#ff7c12`), marks site style setup complete, and stores
+`public/branding/logo.png` as the database logo when that file exists and is
+900KB or smaller.
 
 ## Website Page Content
 
@@ -102,6 +114,22 @@ menu.
 - The editor's image picker lists images deployed under `public/branding/`
   only. There is no upload from the admin UI; add images by committing
   them to the repository.
+
+## Lodge Instructions
+
+Lodge opening, closing, and day-to-day instructions for hut leaders are
+database-backed (`LodgeInstruction`, one row per document) and edited in
+Admin > Lodge Instructions. They are protected content, deliberately separate
+from `PageContent`: they never appear in the public menu or the dynamic
+public page route.
+
+- Readers: admins, plus members with a current or upcoming hut leader
+  assignment, at `/lodge-instructions` (printable). The lodge kiosk shows
+  the documents to the signed-in hut leader tier.
+- HTML is sanitised on save and again on render with the same allowlist as
+  page content (`src/lib/page-content-html.ts`).
+- The migration backfills the three empty documents, so deploy-only
+  environments get editable rows without running the seed.
 
 ## Required Local Setup Variables
 

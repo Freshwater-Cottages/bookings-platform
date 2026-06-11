@@ -1,6 +1,8 @@
 // Club-agnostic first-run seed. Every section is create-if-missing: re-running
 // the seed against a populated database must never delete, overwrite, or
 // duplicate data. Clubs customise the placeholders through the admin screens.
+import fs from "node:fs";
+import path from "node:path";
 import { type AgeTier, PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import { clubConfig } from "../src/config/club";
@@ -8,6 +10,13 @@ import {
   CLUB_CONTACT_EMAIL,
   clubDomainEmail,
 } from "../src/config/club-identity";
+import {
+  CLUB_THEME_ID,
+  DEFAULT_CLUB_THEME_VALUES,
+  MAX_LOGO_DATA_URL_BYTES,
+  TOKOROA_CLUB_THEME_VALUES,
+  isValidLogoDataUrl,
+} from "../src/lib/club-theme-schema";
 import { ensureNotRequiredSubscriptionForRole } from "../src/lib/member-subscription-defaults";
 import { createPrismaPgAdapter } from "../src/lib/prisma-adapter";
 import {
@@ -58,6 +67,64 @@ function requireSeedEnv(
     throw new Error(`${name} is required before running prisma/seed.ts`);
   }
   return value;
+}
+
+function readBrandingLogoDataUrl() {
+  const logoPath = path.join(process.cwd(), "public", "branding", "logo.png");
+  if (!fs.existsSync(logoPath)) {
+    return null;
+  }
+
+  const logo = fs.readFileSync(logoPath);
+  if (logo.byteLength > MAX_LOGO_DATA_URL_BYTES) {
+    throw new Error(
+      `public/branding/logo.png is ${logo.byteLength} bytes; the site style logo cap is ${MAX_LOGO_DATA_URL_BYTES} bytes.`,
+    );
+  }
+
+  const dataUrl = `data:image/png;base64,${logo.toString("base64")}`;
+  if (!isValidLogoDataUrl(dataUrl)) {
+    throw new Error("public/branding/logo.png could not be converted to a valid logo data URL.");
+  }
+
+  return dataUrl;
+}
+
+async function seedClubTheme() {
+  if (process.env.SEED_TOKOROA_THEME_COMPLETE === "1") {
+    const logoDataUrl = readBrandingLogoDataUrl();
+    await prisma.clubTheme.upsert({
+      where: { id: CLUB_THEME_ID },
+      update: {
+        ...TOKOROA_CLUB_THEME_VALUES,
+        logoDataUrl,
+        completedAt: new Date(),
+      },
+      create: {
+        id: CLUB_THEME_ID,
+        ...TOKOROA_CLUB_THEME_VALUES,
+        logoDataUrl,
+        completedAt: new Date(),
+      },
+    });
+    console.log(
+      logoDataUrl
+        ? "Tokoroa site style seeded with palette and logo"
+        : "Tokoroa site style seeded with palette; public/branding/logo.png was not present",
+    );
+    return;
+  }
+
+  await prisma.clubTheme.upsert({
+    where: { id: CLUB_THEME_ID },
+    update: {},
+    create: {
+      id: CLUB_THEME_ID,
+      ...DEFAULT_CLUB_THEME_VALUES,
+      completedAt: null,
+    },
+  });
+  console.log("Default site style seeded");
 }
 
 // Create any missing per-tier rates for a season without touching existing
@@ -263,6 +330,8 @@ async function main() {
   } else {
     console.log("Committee members already present; skipping");
   }
+
+  await seedClubTheme();
 
   console.log("Seeding complete!");
 }

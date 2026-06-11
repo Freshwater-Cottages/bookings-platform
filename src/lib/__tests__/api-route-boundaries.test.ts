@@ -107,9 +107,10 @@ describe("API route boundary metadata", () => {
     .sort();
 
   it("keeps the public route allowlist exact and backed by real files", () => {
-    // 233 = 230 pre-existing routes + admin page-content + admin site-images
-    // + admin bed-allocation rooms import-from-config.
-    expect(routeFiles).toHaveLength(233);
+    // 237 = 234 routes on main (after the content management, rooms/beds and
+    // site-style PRs) + admin lodge-instructions + member lodge-instructions
+    // reader + kiosk lodge/instructions.
+    expect(routeFiles).toHaveLength(237);
 
     const missing = Object.keys(explicitPublicApiRoutes).filter(
       (routePath) => !routeFiles.includes(routePath)
