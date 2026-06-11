@@ -13,7 +13,9 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { WebsiteLogo } from "@/components/website-logo";
 import { CLUB_NAME } from "@/config/club-identity";
+import { getWebsiteThemeRenderState } from "@/lib/club-theme";
 import { LODGE_CAPACITY } from "@/lib/lodge-capacity";
 
 export const metadata: Metadata = {
@@ -58,7 +60,9 @@ const activities = [
   { icon: Users, label: "Working Bees" },
 ];
 
-export default function HomePage() {
+export default async function HomePage() {
+  const { logoDataUrl } = await getWebsiteThemeRenderState();
+
   return (
     <>
       {/* Hero */}
@@ -78,13 +82,11 @@ export default function HomePage() {
         <div className="relative mx-auto max-w-7xl px-4 py-24 sm:px-6 sm:py-32 lg:px-8 lg:py-40">
           <div className="max-w-2xl">
             <span className="website-eyebrow mb-5">Mt Ruapehu lodge since 1969</span>
-            <Image
-              src="/branding/logo.png"
-              alt={`${CLUB_NAME} logo`}
-              width={200}
-              height={68}
-              className="mb-6 h-16 w-auto"
-              priority
+            <WebsiteLogo
+              label={CLUB_NAME}
+              logoDataUrl={logoDataUrl}
+              className="mb-6 max-h-16 max-w-56"
+              textClassName="mb-6 block text-3xl text-brand-snow sm:text-4xl"
             />
             <h1 className="font-heading text-4xl font-bold tracking-tight sm:text-5xl lg:text-6xl">
               {CLUB_NAME}
