@@ -30,9 +30,7 @@ export async function GET(req: NextRequest) {
   }
 
   const isHutLeaderSurface =
-    ("pinSession" in authResult && Boolean(authResult.pinSession)) ||
-    authResult.tier === "admin" ||
-    authResult.tier === "hut-leader";
+    authResult.tier === "admin" || authResult.tier === "hut-leader";
 
   if (!isHutLeaderSurface) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
