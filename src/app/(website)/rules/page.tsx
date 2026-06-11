@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { CLUB_NAME } from "@/config/club-identity";
-import { LODGE_CAPACITY } from "@/lib/lodge-capacity";
+import { getLodgeCapacity } from "@/lib/lodge-capacity";
 import { prisma } from "@/lib/prisma";
 
 export const metadata: Metadata = {
@@ -34,13 +34,15 @@ function formatPolicyRow(
 }
 
 export default async function RulesPage() {
-  const cancellationPolicies = await prisma.cancellationPolicy.findMany({
-    orderBy: { daysBeforeStay: "desc" },
-  });
-
-  const defaults = await prisma.bookingDefaults.findUnique({
-    where: { id: "default" },
-  });
+  const [cancellationPolicies, defaults, lodgeCapacity] = await Promise.all([
+    prisma.cancellationPolicy.findMany({
+      orderBy: { daysBeforeStay: "desc" },
+    }),
+    prisma.bookingDefaults.findUnique({
+      where: { id: "default" },
+    }),
+    getLodgeCapacity(),
+  ]);
   const defaultHoldDays = defaults?.nonMemberHoldDays ?? 7;
 
   const bookingPeriods = await prisma.bookingPeriod.findMany({
@@ -153,7 +155,7 @@ export default async function RulesPage() {
             </h2>
             <div className="space-y-3 text-brand-deep/78">
               <p>
-                The lodge accommodates up to {LODGE_CAPACITY} guests per night. All guests must
+                The lodge accommodates up to {lodgeCapacity} guests per night. All guests must
                 have a formal confirmed paid booking. The only exception is a work
                 party, where the work party leader will make a group booking with
                 the Booking Officer.

@@ -14,40 +14,45 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { CLUB_NAME } from "@/config/club-identity";
-import { LODGE_CAPACITY } from "@/lib/lodge-capacity";
+import {
+  FALLBACK_LODGE_CAPACITY,
+  getLodgeCapacity,
+} from "@/lib/lodge-capacity";
 
 export const metadata: Metadata = {
   title: `${CLUB_NAME} — Mt Ruapehu Lodge`,
   description:
-    `The ${CLUB_NAME} operates a ${LODGE_CAPACITY}-bed lodge on Mt Ruapehu, Whakapapa. A members' club est. 1969 — join us on the mountain.`,
+    `The ${CLUB_NAME} operates a ${FALLBACK_LODGE_CAPACITY}-bed lodge on Mt Ruapehu, Whakapapa. A members' club est. 1969 — join us on the mountain.`,
 };
 
-const highlights = [
-  {
-    icon: Mountain,
-    title: "Mt Ruapehu Lodge",
-    description:
-      `${LODGE_CAPACITY}-bed lodge in the Whakapapa ski area, built and maintained by members since 1969.`,
-  },
-  {
-    icon: Users,
-    title: "A Members' Club",
-    description:
-      "Run entirely by volunteers. Members look after each other and the lodge through working bees and shared responsibilities.",
-  },
-  {
-    icon: Hammer,
-    title: "Built by Members",
-    description:
-      "The lodge was built in a single weekend by members' voluntary labour. All maintenance continues on the same basis.",
-  },
-  {
-    icon: Calendar,
-    title: "Year-Round Access",
-    description:
-      "Open all year for skiing, snowboarding, tramping, photography, and alpine adventures.",
-  },
-];
+function buildHighlights(lodgeCapacity: number) {
+  return [
+    {
+      icon: Mountain,
+      title: "Mt Ruapehu Lodge",
+      description:
+        `${lodgeCapacity}-bed lodge in the Whakapapa ski area, built and maintained by members since 1969.`,
+    },
+    {
+      icon: Users,
+      title: "A Members' Club",
+      description:
+        "Run entirely by volunteers. Members look after each other and the lodge through working bees and shared responsibilities.",
+    },
+    {
+      icon: Hammer,
+      title: "Built by Members",
+      description:
+        "The lodge was built in a single weekend by members' voluntary labour. All maintenance continues on the same basis.",
+    },
+    {
+      icon: Calendar,
+      title: "Year-Round Access",
+      description:
+        "Open all year for skiing, snowboarding, tramping, photography, and alpine adventures.",
+    },
+  ];
+}
 
 const activities = [
   { icon: Snowflake, label: "Skiing & Snowboarding" },
@@ -58,7 +63,9 @@ const activities = [
   { icon: Users, label: "Working Bees" },
 ];
 
-export default function HomePage() {
+export default async function HomePage() {
+  const lodgeCapacity = await getLodgeCapacity();
+
   return (
     <>
       {/* Hero */}
@@ -90,7 +97,7 @@ export default function HomePage() {
               {CLUB_NAME}
             </h1>
             <p className="mt-4 max-w-xl text-lg text-brand-snow/86 sm:text-xl">
-              A members&apos; club on Mt Ruapehu. We operate a {LODGE_CAPACITY}-bed lodge in
+              A members&apos; club on Mt Ruapehu. We operate a {lodgeCapacity}-bed lodge in
               the Whakapapa ski area, open year-round for members and their
               guests.
             </p>
@@ -125,7 +132,7 @@ export default function HomePage() {
             </p>
           </div>
           <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
-            {highlights.map((item) => (
+            {buildHighlights(lodgeCapacity).map((item) => (
               <Card
                 key={item.title}
                 className="border-brand-ridge/20 bg-brand-snow/90 shadow-[0_20px_45px_-35px_rgba(47,47,43,0.45)]"

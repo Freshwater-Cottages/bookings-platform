@@ -3,7 +3,7 @@ import Image from "next/image";
 import { Mountain, Hammer, Users, Calendar } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { CLUB_NAME } from "@/config/club-identity";
-import { LODGE_CAPACITY } from "@/lib/lodge-capacity";
+import { getLodgeCapacity } from "@/lib/lodge-capacity";
 
 export const metadata: Metadata = {
   title: "About the Club",
@@ -11,7 +11,9 @@ export const metadata: Metadata = {
     `Learn about the ${CLUB_NAME}, established in 1969 to encourage tramping, mountaineering, climbing, skiing, and alpine activities in New Zealand.`,
 };
 
-export default function AboutPage() {
+export default async function AboutPage() {
+  const lodgeCapacity = await getLodgeCapacity();
+
   return (
     <>
       {/* Header */}
@@ -125,7 +127,7 @@ export default function AboutPage() {
                 <Mountain className="mb-3 h-7 w-7 text-brand-gold" />
                 <h3 className="font-heading font-semibold text-brand-charcoal">Waldvogel Lodge</h3>
                 <p className="mt-1 text-sm text-brand-deep/75">
-                  {LODGE_CAPACITY}-bed lodge in the Whakapapa ski area. Open year-round.
+                  {lodgeCapacity}-bed lodge in the Whakapapa ski area. Open year-round.
                 </p>
               </CardContent>
             </Card>
