@@ -13,7 +13,7 @@ import { sendBookingConfirmedEmail } from "@/lib/email";
 import logger from "@/lib/logger";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { CAPACITY_HOLDING_BOOKING_STATUSES } from "@/lib/booking-status";
-import { requiresPaidSubscriptionForAgeTierFromSettings } from "@/lib/member-subscription-eligibility";
+import { requiresPaidSubscriptionForBooking } from "@/lib/member-subscription-eligibility";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 
 export async function POST(
@@ -56,10 +56,11 @@ export async function POST(
     );
   }
 
-  // Subscription check (non-admins only)
+  // Subscription check (non-admins only; bypassed when the Xero module is
+  // effectively off, because subscriptions are invoiced through Xero)
   if (
     session.user.role !== "ADMIN" &&
-    await requiresPaidSubscriptionForAgeTierFromSettings(booking.member.ageTier)
+    await requiresPaidSubscriptionForBooking(booking.member.ageTier)
   ) {
     const seasonYear = getSeasonYear(new Date(booking.checkIn));
     const paidSub = await prisma.memberSubscription.findFirst({

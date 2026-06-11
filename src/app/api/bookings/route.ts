@@ -16,7 +16,7 @@ import { getMemberCreditBalance } from "@/lib/member-credit";
 import { findUnpaidMemberGuests } from "@/lib/booking-member-guest-subscriptions";
 import logger from "@/lib/logger";
 import { getSeasonYear } from "@/lib/utils";
-import { requiresPaidSubscriptionForAgeTierFromSettings } from "@/lib/member-subscription-eligibility";
+import { requiresPaidSubscriptionForBooking } from "@/lib/member-subscription-eligibility";
 import {
   assertLinkedBookingMembersCanBeBooked,
   BookingGuestValidationError,
@@ -216,10 +216,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Cannot book in the past" }, { status: 400 });
   }
 
-  // Subscription gate for the booking owner.
+  // Subscription gate for the booking owner. Bypassed when the Xero module
+  // is effectively off, because subscriptions are invoiced through Xero.
   if (
     session.user.role !== "ADMIN" &&
-    await requiresPaidSubscriptionForAgeTierFromSettings(effectiveMemberAgeTier)
+    await requiresPaidSubscriptionForBooking(effectiveMemberAgeTier)
   ) {
     const seasonYear = getSeasonYear(checkIn);
     const paidSub = await prisma.memberSubscription.findFirst({
