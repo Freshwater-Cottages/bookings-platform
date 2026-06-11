@@ -498,6 +498,23 @@ export const APPROVED_EMAIL_TEMPLATE_TOKEN_SET = new Set<string>(
   APPROVED_EMAIL_TEMPLATE_TOKENS,
 );
 
+// Tokens whose rendered values must never appear in an email subject line.
+// Subjects are persisted in EmailLog for every template (including the
+// sensitive ones whose HTML bodies are deliberately not retained) and travel
+// in clear mail headers, so secret values are restricted to message bodies.
+export const SENSITIVE_EMAIL_SUBJECT_TOKENS = [
+  "confirmationUrl",
+  "doorCode",
+  "pin",
+  "resetUrl",
+  "token",
+  "verifyUrl",
+] as const;
+
+export const SENSITIVE_EMAIL_SUBJECT_TOKEN_SET = new Set<string>(
+  SENSITIVE_EMAIL_SUBJECT_TOKENS,
+);
+
 export function getEmailTemplateDefinition(templateName: string) {
   return EMAIL_TEMPLATE_DEFINITIONS.find(
     (definition) => definition.key === templateName,

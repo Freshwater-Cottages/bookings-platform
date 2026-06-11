@@ -15,6 +15,14 @@ settings so administrators can edit shared email variables and template wording
 without changing TypeScript files. Admin/system notification delivery policies
 are managed from `/admin/notifications`.
 
+Sensitive tokens (`{{doorCode}}`, `{{token}}`, `{{pin}}`, `{{resetUrl}}`,
+`{{verifyUrl}}`, `{{confirmationUrl}}`) are body-only: subjects are persisted
+in `EmailLog` for every template and travel in clear mail headers, so template
+override subjects containing these tokens are rejected at save time, and the
+renderer never substitutes their values into a subject line. Required tokens
+must appear in the template body; a token in the subject does not satisfy the
+requirement.
+
 ## Runtime Placeholders
 
 The public checkout has no `config/club.json`, so the checked-in fallback values
