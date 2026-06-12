@@ -82,6 +82,7 @@ interface DashboardBooking {
   checkOut: string;
   memberName: string;
   guests: DashboardGuest[];
+  requestedRoom: DashboardRequestedRoom | null;
 }
 
 interface DashboardGuest {
@@ -116,6 +117,12 @@ interface DashboardGuestNight {
   guestAgeTier: BedAllocationAgeTier;
   memberName: string;
   stayDate: string;
+}
+
+interface DashboardRequestedRoom {
+  id: string;
+  name: string;
+  active: boolean;
 }
 
 export interface BedAllocationDashboardPayload {
@@ -526,6 +533,14 @@ async function loadBookingRecords(
       createdAt: true,
       checkIn: true,
       checkOut: true,
+      requestedRoomId: true,
+      requestedRoom: {
+        select: {
+          id: true,
+          name: true,
+          active: true,
+        },
+      },
       member: {
         select: {
           firstName: true,
@@ -639,6 +654,7 @@ function serializeBookings(
       stayStart: formatDateOnly(guest.stayStart),
       stayEnd: formatDateOnly(guest.stayEnd),
     })),
+    requestedRoom: booking.requestedRoom,
   }));
 }
 
@@ -728,6 +744,7 @@ function candidateGuestBookings(
       return {
         id: booking.id,
         createdAt: booking.createdAt,
+        requestedRoomId: booking.requestedRoomId,
         guests,
       };
     })
