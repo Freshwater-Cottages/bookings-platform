@@ -104,7 +104,10 @@ describe("paid legacy CONFIRMED booking repair", () => {
     expect(CAPACITY_HOLDING_BOOKING_STATUSES).toContain(
       BookingStatus.COMPLETED
     );
-    expect(CAPACITY_HOLDING_BOOKING_STATUSES).not.toContain(
+    // CONFIRMED holds capacity for pay-on-account bookings (school groups,
+    // issue #709): the lodge is reserved at approval while the emailed Xero
+    // invoice is outstanding, and the booking flips to PAID once it is paid.
+    expect(CAPACITY_HOLDING_BOOKING_STATUSES).toContain(
       BookingStatus.CONFIRMED
     );
     // AWAITING_REVIEW must hold capacity so admins decisions don't

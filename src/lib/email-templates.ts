@@ -2282,6 +2282,30 @@ export function adminBookingRequestPendingTemplate(data: {
   `);
 }
 
+export function adminSchoolManualInvoiceTemplate(data: {
+  schoolName: string;
+  contactEmail: string;
+  checkIn: Date;
+  checkOut: Date;
+  guestCount: number;
+  totalCents: number;
+  reviewUrl: string;
+}): string {
+  return layout(`
+    ${heading("School Booking Needs a Manual Invoice")}
+    ${paragraph("A school group booking has been approved and confirmed. The Xero module is currently off, so no invoice was raised automatically. Please invoice the school manually and record payment through the usual paths.")}
+    ${infoTable([
+      { label: "School", value: escapeHtml(data.schoolName) },
+      { label: "Contact email", value: escapeHtml(data.contactEmail) },
+      { label: "Check-in", value: formatNZDate(data.checkIn) },
+      { label: "Check-out", value: formatNZDate(data.checkOut) },
+      { label: "Guests", value: String(data.guestCount) },
+      { label: "Amount", value: formatCents(data.totalCents) },
+    ])}
+    ${button("View Booking Requests", data.reviewUrl, { sameOrigin: true })}
+  `);
+}
+
 export function adminBookingRequestHoldExpiredTemplate(data: {
   requesterName: string;
   checkIn: Date;

@@ -203,6 +203,16 @@ function LoginForm() {
               Request a booking without an account
             </Link>
           </p>
+
+          <p className="text-sm text-center text-muted-foreground">
+            Booking for a school group?{" "}
+            <Link
+              href="/school-bookings"
+              className="text-foreground font-medium underline-offset-4 hover:underline"
+            >
+              Request a school group booking
+            </Link>
+          </p>
         </CardFooter>
       </form>
     </Card>

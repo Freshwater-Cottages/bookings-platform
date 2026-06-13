@@ -42,6 +42,8 @@ interface PublicBookingRequestData {
   id: string;
   type: string;
   status: "NEW" | "VERIFIED" | "PRICED" | "APPROVED" | "DECLINED" | "CONVERTED";
+  schoolName: string | null;
+  teachers: Array<{ firstName: string; lastName: string; email: string | null }>;
   contactFirstName: string;
   contactLastName: string;
   contactEmail: string;
@@ -222,7 +224,15 @@ export function PublicBookingRequestsPanel({
         }
         throw new Error(data.error || "Failed to approve request");
       }
-      setSuccess("Request approved. A payment link has been emailed to the requester.");
+      if (data.type === "SCHOOL") {
+        setSuccess(
+          data.invoiceMode === "xero"
+            ? "School booking confirmed. The Xero invoice has been emailed to the school and the teacher PIN email sent."
+            : "School booking confirmed. The Xero module is off, so admins have been emailed to invoice the school manually."
+        );
+      } else {
+        setSuccess("Request approved. A payment link has been emailed to the requester.");
+      }
       await fetchRequests();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to approve request");
@@ -317,8 +327,15 @@ export function PublicBookingRequestsPanel({
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div>
                       <CardTitle className="text-lg">
-                        {request.contactFirstName} {request.contactLastName}
+                        {request.type === "SCHOOL" && request.schoolName
+                          ? request.schoolName
+                          : `${request.contactFirstName} ${request.contactLastName}`}
                       </CardTitle>
+                      {request.type === "SCHOOL" ? (
+                        <p className="text-sm text-muted-foreground">
+                          Contact: {request.contactFirstName} {request.contactLastName}
+                        </p>
+                      ) : null}
                       <p className="text-sm text-muted-foreground">
                         {request.contactEmail}
                         {request.contactPhone ? ` · ${request.contactPhone}` : ""}
@@ -327,9 +344,19 @@ export function PublicBookingRequestsPanel({
                         Submitted {formatDateTime(request.createdAt)}
                       </p>
                     </div>
-                    <Badge variant="outline" className={statusBadgeClass(request.status)}>
-                      {request.status}
-                    </Badge>
+                    <div className="flex flex-wrap items-center gap-2">
+                      {request.type === "SCHOOL" ? (
+                        <Badge
+                          variant="outline"
+                          className="border-indigo-200 bg-indigo-50 text-indigo-800"
+                        >
+                          School
+                        </Badge>
+                      ) : null}
+                      <Badge variant="outline" className={statusBadgeClass(request.status)}>
+                        {request.status}
+                      </Badge>
+                    </div>
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-4">
@@ -354,6 +381,15 @@ export function PublicBookingRequestsPanel({
                       </div>
                     ) : null}
                   </div>
+
+                  {request.type === "SCHOOL" && request.teachers.length > 0 ? (
+                    <div className="text-sm">
+                      <span className="text-muted-foreground">Teachers (hut leaders):</span>{" "}
+                      {request.teachers
+                        .map((teacher) => `${teacher.firstName} ${teacher.lastName}`)
+                        .join(", ")}
+                    </div>
+                  ) : null}
 
                   <div className="flex flex-wrap gap-1 text-sm">
                     {request.guests.map((guest, index) => (
@@ -419,9 +455,14 @@ export function PublicBookingRequestsPanel({
                         <Button
                           size="sm"
                           onClick={() => handleApprove(request)}
-                          disabled={isActioning || request.status !== "PRICED"}
+                          disabled={
+                            isActioning ||
+                            (request.type !== "SCHOOL" && request.status !== "PRICED")
+                          }
                         >
-                          Approve &amp; send payment link
+                          {request.type === "SCHOOL"
+                            ? "Approve & invoice school"
+                            : "Approve & send payment link"}
                         </Button>
                         <Button
                           size="sm"
@@ -434,7 +475,9 @@ export function PublicBookingRequestsPanel({
                       </div>
                       {request.status === "VERIFIED" ? (
                         <p className="text-xs text-muted-foreground">
-                          Set a price before approving.
+                          {request.type === "SCHOOL"
+                            ? "Pricing is automatic from the group rates. Set a price above only to override."
+                            : "Set a price before approving."}
                         </p>
                       ) : null}
                     </div>

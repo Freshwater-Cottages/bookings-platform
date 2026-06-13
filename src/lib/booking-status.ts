@@ -9,6 +9,11 @@ export const CAPACITY_HOLDING_BOOKING_STATUSES = [
   // AWAITING_REVIEW must hold the bed: otherwise another member could book
   // the same dates while an admin is deciding, and approval would overbook.
   BookingStatus.AWAITING_REVIEW,
+  // CONFIRMED holds capacity for pay-on-account bookings (school groups,
+  // issue #709): the booking is confirmed at approval and the lodge is
+  // reserved while the emailed Xero invoice is outstanding. It flips to PAID
+  // when the invoice is reconciled.
+  BookingStatus.CONFIRMED,
 ] as const;
 
 export const PAYMENT_OWED_BOOKING_STATUSES = [

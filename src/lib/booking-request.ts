@@ -831,11 +831,25 @@ export function buildBookingRequestListWhere(
   return { status: filter };
 }
 
+function parseAdminTeachers(raw: unknown) {
+  const schema = z.array(
+    z.object({
+      firstName: z.string(),
+      lastName: z.string(),
+      email: z.string().nullable().optional(),
+    })
+  );
+  const parsed = schema.safeParse(raw);
+  return parsed.success ? parsed.data : [];
+}
+
 export function serializeBookingRequestForAdmin(request: BookingRequest) {
   return {
     id: request.id,
     type: request.type,
     status: request.status,
+    schoolName: request.schoolName,
+    teachers: parseAdminTeachers(request.teachers),
     contactFirstName: request.contactFirstName,
     contactLastName: request.contactLastName,
     contactEmail: request.contactEmail,

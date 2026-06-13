@@ -112,7 +112,8 @@ describe("API route boundary metadata", () => {
     // booking request flow: 6 public (booking-requests, its quote/settings/
     // verify, pay/[token] and pay/[token]/payment-intent) and 5 admin
     // (admin/booking-requests list, settings, and [id] price/approve/decline).
-    expect(routeFiles).toHaveLength(258);
+    // 259 adds the #709 public school booking request route.
+    expect(routeFiles).toHaveLength(259);
 
     const missing = Object.keys(explicitPublicApiRoutes).filter(
       (routePath) => !routeFiles.includes(routePath)
