@@ -67,6 +67,7 @@ import {
   bookingRequestApprovedTemplate,
   bookingRequestDeclinedTemplate,
   adminBookingRequestPendingTemplate,
+  adminSchoolManualInvoiceTemplate,
   adminBookingRequestHoldExpiredTemplate,
   type XeroReconciliationReportEmail,
 } from "./email-templates";
@@ -2262,6 +2263,43 @@ export async function sendAdminBookingRequestPendingEmail(data: {
       checkIn: formatNZDate(data.checkIn),
       checkOut: formatNZDate(data.checkOut),
       guestCount: data.guestCount,
+      reviewUrl,
+    },
+    preferenceKey: "adminBookingRequest",
+  });
+}
+
+export async function sendAdminSchoolManualInvoiceEmail(data: {
+  schoolName: string;
+  contactEmail: string;
+  checkIn: Date;
+  checkOut: Date;
+  guestCount: number;
+  totalCents: number;
+}) {
+  const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
+  const reviewUrl = `${baseUrl}${buildBookingRequestsHref("public", {})}`;
+
+  await sendToAdmins({
+    subject: `School booking needs a manual invoice: ${data.schoolName}`,
+    html: adminSchoolManualInvoiceTemplate({
+      schoolName: data.schoolName,
+      contactEmail: data.contactEmail,
+      checkIn: data.checkIn,
+      checkOut: data.checkOut,
+      guestCount: data.guestCount,
+      totalCents: data.totalCents,
+      reviewUrl,
+    }),
+    templateName: "admin-school-manual-invoice",
+    templateData: {
+      schoolName: data.schoolName,
+      contactEmail: data.contactEmail,
+      checkIn: formatNZDate(data.checkIn),
+      checkOut: formatNZDate(data.checkOut),
+      guestCount: data.guestCount,
+      totalCents: data.totalCents,
+      amount: formatMoneyCents(data.totalCents),
       reviewUrl,
     },
     preferenceKey: "adminBookingRequest",

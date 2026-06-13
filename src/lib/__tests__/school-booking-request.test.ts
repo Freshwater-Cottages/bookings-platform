@@ -1,0 +1,435 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  BookingRequestStatus,
+  BookingRequestType,
+  BookingStatus,
+  PaymentSource,
+  PaymentStatus,
+} from "@prisma/client";
+
+vi.mock("@/lib/prisma", () => ({
+  prisma: {
+    bookingRequest: {
+      create: vi.fn(),
+      findUnique: vi.fn(),
+      updateMany: vi.fn(),
+      update: vi.fn(),
+    },
+    member: { create: vi.fn() },
+    booking: { create: vi.fn() },
+    payment: { create: vi.fn() },
+    hutLeaderAssignment: { create: vi.fn() },
+    season: { findMany: vi.fn() },
+    groupDiscountSetting: { findUnique: vi.fn() },
+    $transaction: vi.fn(),
+    $executeRaw: vi.fn(),
+  },
+}));
+
+vi.mock("@/lib/email", () => ({
+  sendBookingRequestVerificationEmail: vi.fn().mockResolvedValue(undefined),
+  sendHutLeaderAssignmentEmail: vi.fn().mockResolvedValue(undefined),
+  sendAdminSchoolManualInvoiceEmail: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock("@/lib/audit", () => ({ logAudit: vi.fn() }));
+
+vi.mock("@/lib/capacity", () => ({
+  checkCapacityForGuestRanges: vi.fn(),
+}));
+
+vi.mock("@/lib/lodge-capacity", () => ({
+  getLodgeCapacity: vi.fn().mockResolvedValue(40),
+}));
+
+vi.mock("@/lib/lodge-pin-session", () => ({
+  generateHutLeaderPin: vi.fn(() => "246810"),
+  hashHutLeaderPin: vi.fn().mockResolvedValue("hashed-pin"),
+}));
+
+vi.mock("@/lib/xero-operation-outbox", () => ({
+  enqueueXeroBookingInvoiceOperation: vi
+    .fn()
+    .mockResolvedValue({ queueOperationId: "op-1" }),
+  kickQueuedXeroOutboxOperationsIfConnected: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock("@/lib/admin-modules", () => ({
+  isEffectiveModuleEnabled: vi.fn().mockResolvedValue(true),
+}));
+
+vi.mock("@/lib/logger", () => ({
+  default: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
+}));
+
+vi.mock("bcryptjs", () => ({
+  hash: vi.fn().mockResolvedValue("hashed-placeholder"),
+}));
+
+import { prisma } from "@/lib/prisma";
+import {
+  sendBookingRequestVerificationEmail,
+  sendHutLeaderAssignmentEmail,
+  sendAdminSchoolManualInvoiceEmail,
+} from "@/lib/email";
+import { checkCapacityForGuestRanges } from "@/lib/capacity";
+import { isEffectiveModuleEnabled } from "@/lib/admin-modules";
+import {
+  enqueueXeroBookingInvoiceOperation,
+} from "@/lib/xero-operation-outbox";
+import { requiresAdultSupervisionReview } from "@/lib/booking-review";
+import { BookingRequestError } from "@/lib/booking-request";
+import {
+  approveSchoolBookingRequest,
+  createSchoolBookingRequest,
+  generateSchoolGuests,
+} from "@/lib/school-booking-request";
+
+const mockedFindUnique = vi.mocked(prisma.bookingRequest.findUnique);
+const mockedCreate = vi.mocked(prisma.bookingRequest.create);
+const mockedUpdateMany = vi.mocked(prisma.bookingRequest.updateMany);
+const mockedTransaction = vi.mocked(prisma.$transaction);
+const mockedCheckCapacity = vi.mocked(checkCapacityForGuestRanges);
+const mockedSeasonFindMany = vi.mocked(prisma.season.findMany);
+const mockedGroupDiscount = vi.mocked(prisma.groupDiscountSetting.findUnique);
+const mockedModuleEnabled = vi.mocked(isEffectiveModuleEnabled);
+const mockedEnqueueInvoice = vi.mocked(enqueueXeroBookingInvoiceOperation);
+const mockedSendVerification = vi.mocked(sendBookingRequestVerificationEmail);
+const mockedSendPin = vi.mocked(sendHutLeaderAssignmentEmail);
+const mockedSendManualInvoice = vi.mocked(sendAdminSchoolManualInvoiceEmail);
+
+const CHECK_IN = new Date("2026-08-01T00:00:00.000Z");
+const CHECK_OUT = new Date("2026-08-03T00:00:00.000Z"); // 2 nights
+
+function schoolRequest(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    id: "req-school",
+    type: BookingRequestType.SCHOOL,
+    status: BookingRequestStatus.VERIFIED,
+    schoolName: "New Plymouth Primary School",
+    teachers: [{ firstName: "Tana", lastName: "Teacher", email: "tana@school.test" }],
+    contactFirstName: "Carol",
+    contactLastName: "Contact",
+    contactEmail: "office@school.test",
+    contactPhone: null,
+    checkIn: CHECK_IN,
+    checkOut: CHECK_OUT,
+    guests: [
+      { firstName: "Tana", lastName: "Teacher", ageTier: "ADULT" },
+      { firstName: "School Child", lastName: "1", ageTier: "CHILD" },
+      { firstName: "School Child", lastName: "2", ageTier: "CHILD" },
+    ],
+    message: null,
+    indicativePriceCents: 20000,
+    priceCents: null,
+    createdAt: new Date("2026-06-01T00:00:00.000Z"),
+    updatedAt: new Date("2026-06-01T00:00:00.000Z"),
+    ...overrides,
+  };
+}
+
+function seasonWithRates() {
+  return [
+    {
+      id: "season-1",
+      startDate: new Date("2026-07-01T00:00:00.000Z"),
+      endDate: new Date("2026-09-01T00:00:00.000Z"),
+      type: "WINTER",
+      rates: [
+        { ageTier: "ADULT", isMember: false, pricePerNightCents: 5000 },
+        { ageTier: "CHILD", isMember: false, pricePerNightCents: 2500 },
+      ],
+    },
+  ];
+}
+
+describe("generateSchoolGuests", () => {
+  it("builds named ADULT teachers and numbered School Child rows by tier", () => {
+    const guests = generateSchoolGuests({
+      teachers: [{ firstName: "Tana", lastName: "Teacher" }],
+      childCounts: { CHILD: 2, YOUTH: 1 },
+    });
+
+    expect(guests).toEqual([
+      { firstName: "Tana", lastName: "Teacher", ageTier: "ADULT" },
+      { firstName: "School Child", lastName: "1", ageTier: "CHILD" },
+      { firstName: "School Child", lastName: "2", ageTier: "CHILD" },
+      { firstName: "School Child", lastName: "3", ageTier: "YOUTH" },
+    ]);
+  });
+});
+
+describe("adult supervision rule with a teacher (issue #709 requirement 7)", () => {
+  it("accepts a school booking when a teacher (ADULT) is present", () => {
+    const guests = generateSchoolGuests({
+      teachers: [{ firstName: "Tana", lastName: "Teacher" }],
+      childCounts: { CHILD: 5 },
+    });
+    expect(requiresAdultSupervisionReview(guests)).toBe(false);
+  });
+
+  it("still flags a children-only group with no adult", () => {
+    const guests = generateSchoolGuests({
+      teachers: [],
+      childCounts: { CHILD: 5 },
+    });
+    expect(requiresAdultSupervisionReview(guests)).toBe(true);
+  });
+});
+
+describe("createSchoolBookingRequest", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedSeasonFindMany.mockResolvedValue([] as never); // no indicative price
+    mockedCreate.mockResolvedValue(schoolRequest({ id: "req-new" }) as never);
+  });
+
+  it("requires a school name", async () => {
+    await expect(
+      createSchoolBookingRequest({
+        schoolName: "  ",
+        contactFirstName: "Carol",
+        contactLastName: "Contact",
+        contactEmail: "office@school.test",
+        checkIn: CHECK_IN,
+        checkOut: CHECK_OUT,
+        teachers: [{ firstName: "Tana", lastName: "Teacher" }],
+        childCounts: { CHILD: 2 },
+      })
+    ).rejects.toThrow(BookingRequestError);
+    expect(mockedCreate).not.toHaveBeenCalled();
+  });
+
+  it("requires at least one teacher", async () => {
+    await expect(
+      createSchoolBookingRequest({
+        schoolName: "New Plymouth Primary School",
+        contactFirstName: "Carol",
+        contactLastName: "Contact",
+        contactEmail: "office@school.test",
+        checkIn: CHECK_IN,
+        checkOut: CHECK_OUT,
+        teachers: [],
+        childCounts: { CHILD: 2 },
+      })
+    ).rejects.toThrow(BookingRequestError);
+  });
+
+  it("creates a SCHOOL request with generated guests and emails verification", async () => {
+    await createSchoolBookingRequest({
+      schoolName: "New Plymouth Primary School",
+      contactFirstName: "Carol",
+      contactLastName: "Contact",
+      contactEmail: "Office@School.test",
+      checkIn: CHECK_IN,
+      checkOut: CHECK_OUT,
+      teachers: [{ firstName: "Tana", lastName: "Teacher", email: "Tana@School.test" }],
+      childCounts: { CHILD: 2, YOUTH: 1 },
+    });
+
+    expect(mockedCreate).toHaveBeenCalledTimes(1);
+    const data = mockedCreate.mock.calls[0][0].data as Record<string, unknown>;
+    expect(data.type).toBe(BookingRequestType.SCHOOL);
+    expect(data.schoolName).toBe("New Plymouth Primary School");
+    expect(data.contactEmail).toBe("office@school.test");
+    const guests = data.guests as Array<{ ageTier: string }>;
+    expect(guests).toHaveLength(4); // 1 teacher + 3 children
+    expect(guests.filter((g) => g.ageTier === "ADULT")).toHaveLength(1);
+    const teachers = data.teachers as Array<{ email: string | null }>;
+    expect(teachers[0].email).toBe("tana@school.test");
+
+    expect(mockedSendVerification).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a group larger than lodge capacity", async () => {
+    await expect(
+      createSchoolBookingRequest({
+        schoolName: "Big School",
+        contactFirstName: "Carol",
+        contactLastName: "Contact",
+        contactEmail: "office@school.test",
+        checkIn: CHECK_IN,
+        checkOut: CHECK_OUT,
+        teachers: [{ firstName: "Tana", lastName: "Teacher" }],
+        childCounts: { CHILD: 200 },
+      })
+    ).rejects.toThrow(/lodge capacity/);
+  });
+});
+
+describe("approveSchoolBookingRequest", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedTransaction.mockImplementation(
+      async (fn: (tx: typeof prisma) => Promise<unknown>) => fn(prisma)
+    );
+    mockedUpdateMany.mockResolvedValue({ count: 1 } as never);
+    mockedCheckCapacity.mockResolvedValue({
+      available: true,
+      minAvailable: 30,
+      nightDetails: [],
+    } as never);
+    mockedModuleEnabled.mockResolvedValue(true);
+    mockedSeasonFindMany.mockResolvedValue(seasonWithRates() as never);
+    mockedGroupDiscount.mockResolvedValue(null as never);
+
+    let memberCalls = 0;
+    vi.mocked(prisma.member.create).mockImplementation(async () => {
+      memberCalls += 1;
+      return memberCalls === 1
+        ? ({ id: "school-member" } as never)
+        : ({
+            id: `teacher-member-${memberCalls}`,
+            firstName: "Tana",
+            email: "tana@school.test",
+          } as never);
+    });
+    vi.mocked(prisma.booking.create).mockResolvedValue({ id: "booking-1" } as never);
+    vi.mocked(prisma.payment.create).mockResolvedValue({} as never);
+    vi.mocked(prisma.hutLeaderAssignment.create).mockResolvedValue({} as never);
+    vi.mocked(prisma.bookingRequest.update).mockResolvedValue({} as never);
+  });
+
+  it("rejects a non-school request", async () => {
+    mockedFindUnique.mockResolvedValue(
+      schoolRequest({ type: BookingRequestType.GENERAL }) as never
+    );
+    await expect(
+      approveSchoolBookingRequest({ requestId: "req-school", adminMemberId: "admin-1" })
+    ).rejects.toMatchObject({ status: 400 });
+  });
+
+  it("rejects a request that is not verified or priced", async () => {
+    mockedFindUnique.mockResolvedValue(
+      schoolRequest({ status: BookingRequestStatus.NEW }) as never
+    );
+    await expect(
+      approveSchoolBookingRequest({ requestId: "req-school", adminMemberId: "admin-1" })
+    ).rejects.toMatchObject({ status: 409 });
+  });
+
+  it("returns capacityExceeded without converting when no beds remain", async () => {
+    mockedFindUnique.mockResolvedValue(schoolRequest() as never);
+    mockedCheckCapacity.mockResolvedValue({
+      available: false,
+      minAvailable: -2,
+      nightDetails: [
+        { date: new Date("2026-08-01T00:00:00.000Z"), availableBeds: -2 },
+        { date: new Date("2026-08-02T00:00:00.000Z"), availableBeds: 1 },
+      ],
+    } as never);
+
+    const result = await approveSchoolBookingRequest({
+      requestId: "req-school",
+      adminMemberId: "admin-1",
+    });
+
+    expect(result).toEqual({ type: "capacityExceeded", fullNights: ["2026-08-01"] });
+    expect(prisma.member.create).not.toHaveBeenCalled();
+  });
+
+  it("confirms the booking, prices from group rates, raises the Xero invoice, and assigns the teacher", async () => {
+    mockedFindUnique.mockResolvedValue(schoolRequest() as never);
+
+    const result = await approveSchoolBookingRequest({
+      requestId: "req-school",
+      adminMemberId: "admin-1",
+    });
+
+    expect(result).toMatchObject({
+      type: "approved",
+      bookingId: "booking-1",
+      schoolMemberId: "school-member",
+      invoiceMode: "xero",
+      teacherCount: 1,
+    });
+    // 1 adult @ 5000 x2 nights + 2 children @ 2500 x2 nights = 20000.
+    expect(result).toMatchObject({ priceCents: 20000 });
+
+    // School is the non-login Xero contact: name = school, email = contact.
+    const schoolMemberArgs = vi.mocked(prisma.member.create).mock.calls[0][0]
+      .data as Record<string, unknown>;
+    expect(schoolMemberArgs.firstName).toBe("New Plymouth Primary School");
+    expect(schoolMemberArgs.email).toBe("office@school.test");
+    expect(schoolMemberArgs.canLogin).toBe(false);
+
+    // Booking is CONFIRMED (capacity held) and pays on account via Xero invoice.
+    const bookingArgs = vi.mocked(prisma.booking.create).mock.calls[0][0].data as Record<
+      string,
+      unknown
+    >;
+    expect(bookingArgs.status).toBe(BookingStatus.CONFIRMED);
+    expect(bookingArgs.finalPriceCents).toBe(20000);
+
+    const paymentArgs = vi.mocked(prisma.payment.create).mock.calls[0][0].data as Record<
+      string,
+      unknown
+    >;
+    expect(paymentArgs.source).toBe(PaymentSource.INTERNET_BANKING);
+    expect(paymentArgs.status).toBe(PaymentStatus.PENDING);
+
+    // Teacher becomes a non-login member with a hut leader assignment + PIN email.
+    const teacherMemberArgs = vi.mocked(prisma.member.create).mock.calls[1][0].data as Record<
+      string,
+      unknown
+    >;
+    expect(teacherMemberArgs.canLogin).toBe(false);
+    expect(vi.mocked(prisma.hutLeaderAssignment.create)).toHaveBeenCalledTimes(1);
+    expect(mockedSendPin).toHaveBeenCalledWith(
+      expect.objectContaining({ email: "tana@school.test", pin: "246810" })
+    );
+
+    expect(mockedEnqueueInvoice).toHaveBeenCalledWith(
+      "booking-1",
+      expect.objectContaining({ createdByMemberId: "admin-1" })
+    );
+    expect(mockedSendManualInvoice).not.toHaveBeenCalled();
+  });
+
+  it("falls back to a manual-invoice admin alert when the Xero module is off", async () => {
+    mockedFindUnique.mockResolvedValue(schoolRequest() as never);
+    mockedModuleEnabled.mockResolvedValue(false);
+
+    const result = await approveSchoolBookingRequest({
+      requestId: "req-school",
+      adminMemberId: "admin-1",
+    });
+
+    expect(result).toMatchObject({ type: "approved", invoiceMode: "manual" });
+    expect(mockedEnqueueInvoice).not.toHaveBeenCalled();
+    expect(mockedSendManualInvoice).toHaveBeenCalledWith(
+      expect.objectContaining({
+        schoolName: "New Plymouth Primary School",
+        contactEmail: "office@school.test",
+        totalCents: 20000,
+      })
+    );
+  });
+
+  it("uses an officer-set price override when present", async () => {
+    mockedFindUnique.mockResolvedValue(
+      schoolRequest({ status: BookingRequestStatus.PRICED, priceCents: 33000 }) as never
+    );
+
+    const result = await approveSchoolBookingRequest({
+      requestId: "req-school",
+      adminMemberId: "admin-1",
+    });
+
+    expect(result).toMatchObject({ priceCents: 33000 });
+    const bookingArgs = vi.mocked(prisma.booking.create).mock.calls[0][0].data as Record<
+      string,
+      unknown
+    >;
+    expect(bookingArgs.finalPriceCents).toBe(33000);
+  });
+
+  it("refuses to approve when no season covers the dates and no price is set", async () => {
+    mockedFindUnique.mockResolvedValue(schoolRequest() as never);
+    mockedSeasonFindMany.mockResolvedValue([] as never);
+
+    await expect(
+      approveSchoolBookingRequest({ requestId: "req-school", adminMemberId: "admin-1" })
+    ).rejects.toMatchObject({ status: 409 });
+  });
+});

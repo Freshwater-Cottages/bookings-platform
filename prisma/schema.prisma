@@ -202,6 +202,9 @@ enum BookingChangeRequestStatus {
 
 enum BookingRequestType {
   GENERAL
+  // School group bookings (issue #709): bulk children, invoiced to the
+  // school via Xero, teacher tagged as hut leader.
+  SCHOOL
 }
 
 enum BookingRequestStatus {
@@ -747,9 +750,17 @@ model BookingRequest {
   contactPhone     String?              @db.VarChar(30)
   checkIn          DateTime             @db.Date
   checkOut         DateTime             @db.Date
-  // Guest list snapshot: array of { firstName, lastName, ageTier }
+  // Guest list snapshot: array of { firstName, lastName, ageTier }.
+  // For SCHOOL requests this holds the generated bulk list: teachers as
+  // named ADULT guests plus "School Child 1..N" rows at the requested tiers.
   guests           Json
   message          String?              @db.VarChar(1000)
+
+  // SCHOOL variant only. The school is the invoiced party / Xero contact.
+  schoolName       String?              @db.VarChar(200)
+  // Teacher contact snapshot: array of { firstName, lastName, email? }.
+  // Each becomes a non-login Member with a HutLeaderAssignment on approval.
+  teachers         Json?
 
   // Indicative pricing shown on the public form (when enabled) at submit time.
   indicativePriceCents Int?

@@ -65,6 +65,10 @@ export const explicitPublicApiRoutes = {
     boundary: "public",
     reason: "Anonymous non-member booking request submission with validation, CRLF stripping and rate limiting; creates only an unverified BookingRequest, never a booking.",
   },
+  "src/app/api/booking-requests/school/route.ts": {
+    boundary: "public",
+    reason: "Anonymous school group booking request submission with validation, CRLF stripping and rate limiting; creates only an unverified SCHOOL BookingRequest, never a booking.",
+  },
   "src/app/api/booking-requests/settings/route.ts": {
     boundary: "public",
     reason: "Public read of the booking request pricing-visibility flag used to label the request form; rate limited.",
