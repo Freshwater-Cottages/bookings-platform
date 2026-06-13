@@ -12,6 +12,7 @@ import {
   sendBookingGuestsRemovedEmail,
   sendBookingGuestsCancelledEmail,
   sendAdminPaymentFailureAlert,
+  sendAdminBookingRequestHoldExpiredEmail,
 } from "./email";
 import { processWaitlistForDates } from "./waitlist";
 import logger from "@/lib/logger";
@@ -21,6 +22,10 @@ import { upsertPaymentIntentTransaction } from "@/lib/payment-transactions";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 import { applyPartialBumpInTransaction } from "@/lib/partial-bump";
 import { deletePromoRedemptionAndAdjustCount } from "@/lib/promo";
+import { revokePaymentLinksForBooking } from "@/lib/payment-link";
+
+/** How long to extend the hold for request-origin bookings (no saved card) at hold expiry. */
+const REQUEST_HOLD_EXTENSION_MS = 2 * 24 * 60 * 60 * 1000;
 
 export interface CronConfirmResult {
   confirmedBookingIds: string[];
@@ -57,6 +62,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
       member: true,
       guests: true,
       payment: true,
+      originBookingRequest: { select: { id: true } },
       promoRedemption: {
         include: {
           guestTargets: { select: { bookingGuestId: true } },
@@ -175,6 +181,19 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
       );
 
       if (!capacityCheck.available) {
+        // Request-origin bookings (#707) are never partially bumped: they pay
+        // via a tokenised PaymentLink and have no member guest to keep. Whole-
+        // cancel and revoke the link so it can't be paid after the bump.
+        if (booking.originBookingRequest) {
+          const bumped = await bumpWholeBookingAtHoldExpiry(booking, {
+            flagged: false,
+          });
+          if (bumped) {
+            await revokePaymentLinksForBooking(booking.id);
+          }
+          continue;
+        }
+
         const nonMemberGuests = booking.guests.filter((g) => !g.isMember);
         const memberGuests = booking.guests.filter((g) => g.isMember);
 
@@ -378,6 +397,44 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
 
       // Beds available - try to charge saved payment method
       if (!booking.payment?.stripePaymentMethodId || !booking.payment?.stripeCustomerId) {
+        if (booking.originBookingRequest) {
+          // Request-origin bookings (#707) pay via a tokenised PaymentLink, not
+          // a saved card - never auto-charge them. Extend the hold so the
+          // booking stays PENDING (capacity-protected) and alert admins to
+          // follow up with the requester.
+          const extendedHoldUntil = new Date(
+            now.getTime() + REQUEST_HOLD_EXTENSION_MS
+          );
+          const claimed = await prisma.booking.updateMany({
+            where: {
+              id: booking.id,
+              status: BookingStatus.PENDING,
+              nonMemberHoldUntil: booking.nonMemberHoldUntil,
+            },
+            data: { nonMemberHoldUntil: extendedHoldUntil },
+          });
+
+          if (claimed.count > 0) {
+            try {
+              await sendAdminBookingRequestHoldExpiredEmail({
+                requesterName: `${booking.member.firstName} ${booking.member.lastName}`,
+                checkIn: booking.checkIn,
+                checkOut: booking.checkOut,
+                guestCount: booking.guests.length,
+                totalCents: booking.finalPriceCents,
+                holdUntil: extendedHoldUntil,
+              });
+            } catch (emailErr) {
+              logger.error(
+                { err: emailErr, bookingId: booking.id, job: "confirmPendingBookings" },
+                "Failed to send admin hold-expired alert"
+              );
+            }
+          }
+
+          continue;
+        }
+
         logger.error({ bookingId: booking.id, job: "confirmPendingBookings" }, "Booking has no saved payment method - cannot auto-confirm");
         result.failedBookingIds.push(booking.id);
         continue;

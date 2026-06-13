@@ -16,6 +16,7 @@ import {
 } from "@/lib/booking-guest-stay-ranges";
 import { deletePromoRedemptionAndAdjustCount } from "@/lib/promo";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
+import { revokePaymentLinksForBooking } from "@/lib/payment-link";
 import { applyPartialBumpInTransaction } from "@/lib/partial-bump";
 
 export interface BumpResult {
@@ -223,6 +224,10 @@ async function claimAndWholeBump(
   if (promoRedemption) {
     await deletePromoRedemptionAndAdjustCount(tx, promoRedemption);
   }
+
+  // Revoke any tokenised payment links (request-origin bookings, #707) so a
+  // bumped booking can't be paid for. No-op for bookings without links.
+  await revokePaymentLinksForBooking(booking.id, tx);
 
   return true;
 }

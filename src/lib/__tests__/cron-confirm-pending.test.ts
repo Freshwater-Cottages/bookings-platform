@@ -47,12 +47,21 @@ const mockSendBumpedEmail = vi.fn();
 const mockSendGuestsRemovedEmail = vi.fn();
 const mockSendGuestsCancelledEmail = vi.fn();
 const mockSendAdminPaymentFailureAlert = vi.fn().mockResolvedValue(undefined);
+const mockSendAdminHoldExpiredAlert = vi.fn().mockResolvedValue(undefined);
 vi.mock("../email", () => ({
   sendBookingConfirmedEmail: (...args: unknown[]) => mockSendConfirmedEmail(...args),
   sendBookingBumpedEmail: (...args: unknown[]) => mockSendBumpedEmail(...args),
   sendBookingGuestsRemovedEmail: (...args: unknown[]) => mockSendGuestsRemovedEmail(...args),
   sendBookingGuestsCancelledEmail: (...args: unknown[]) => mockSendGuestsCancelledEmail(...args),
   sendAdminPaymentFailureAlert: (...args: unknown[]) => mockSendAdminPaymentFailureAlert(...args),
+  sendAdminBookingRequestHoldExpiredEmail: (...args: unknown[]) =>
+    mockSendAdminHoldExpiredAlert(...args),
+}));
+
+// The confirm-pending cron revokes payment links for bumped bookings
+// (issue #707); the behaviour itself is covered in payment-link.test.ts.
+vi.mock("@/lib/payment-link", () => ({
+  revokePaymentLinksForBooking: vi.fn().mockResolvedValue(0),
 }));
 
 // Mock the partial-bump helper (its internals are unit-tested separately).
@@ -642,5 +651,33 @@ describe("Cron: Confirm Pending Bookings", () => {
     expect(result.partialBumpedBookingIds).toEqual([]);
     expect(mockChargePaymentMethod).not.toHaveBeenCalled();
     expect(mockSendGuestsRemovedEmail).not.toHaveBeenCalled();
+  });
+
+  it("extends the hold and alerts admins for a request-origin booking, never charging it (#707)", async () => {
+    const booking = {
+      ...makePendingBooking("b1", { hasPaymentMethod: false }),
+      originBookingRequest: { id: "req_1" },
+    };
+    mockBookingFindMany.mockResolvedValue([booking]);
+    mockCheckCapacityForGuestRanges.mockResolvedValue({
+      available: true,
+      minAvailable: 5,
+      nightDetails: [],
+    });
+
+    const result = await confirmPendingBookings();
+
+    // Request-origin bookings pay via a tokenised link, never a saved card.
+    expect(mockChargePaymentMethod).not.toHaveBeenCalled();
+    // Hold extended via the status-claim; booking stays PENDING (not failed).
+    expect(mockBookingUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: "b1", status: "PENDING" }),
+        data: { nonMemberHoldUntil: expect.any(Date) },
+      })
+    );
+    expect(result.failedBookingIds).toEqual([]);
+    expect(result.confirmedBookingIds).toEqual([]);
+    expect(mockSendAdminHoldExpiredAlert).toHaveBeenCalled();
   });
 });
