@@ -11,7 +11,7 @@
  * startDate to endDate, both inclusive (matching Season night semantics).
  * Booking nights remain half-open (checkIn inclusive, checkOut exclusive).
  */
-import { randomBytes } from "crypto";
+import { randomInt } from "crypto";
 import { Prisma, PromoCodeType } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
@@ -36,10 +36,12 @@ const CODE_CHARSET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 const CODE_SUFFIX_LENGTH = 8;
 
 export function generateWorkPartyPromoCode(): string {
-  const bytes = randomBytes(CODE_SUFFIX_LENGTH);
   let suffix = "";
   for (let i = 0; i < CODE_SUFFIX_LENGTH; i++) {
-    suffix += CODE_CHARSET[bytes[i] % CODE_CHARSET.length];
+    // randomInt uses rejection sampling so every character is chosen with
+    // equal probability (a `randomBytes(...)[i] % charset.length` approach
+    // would be subtly biased for charset lengths that aren't a power of two).
+    suffix += CODE_CHARSET[randomInt(0, CODE_CHARSET.length)];
   }
   return `${WORK_PARTY_PROMO_CODE_PREFIX}${suffix}`;
 }
