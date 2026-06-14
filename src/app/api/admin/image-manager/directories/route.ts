@@ -2,21 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
 import fs from "fs/promises";
 import path from "path";
-
-const IMAGES_ROOT = path.join(process.cwd(), "public", "images");
-
-/** Resolve a client-supplied relative path safely inside IMAGES_ROOT. */
-function safeResolve(rel: string): string | null {
-  const normalized = path.normalize(rel);
-  const resolved = path.resolve(IMAGES_ROOT, normalized);
-  if (
-    resolved !== IMAGES_ROOT &&
-    !resolved.startsWith(IMAGES_ROOT + path.sep)
-  ) {
-    return null;
-  }
-  return resolved;
-}
+import {
+  IMAGES_ROOT,
+  ensureImagesRootForRead,
+  isStorageUnavailableCode,
+  resolveInImagesRoot,
+  storageUnavailableMessage,
+} from "@/lib/image-storage";
 
 async function collectDirs(absDir: string, relBase: string): Promise<string[]> {
   let entries;
@@ -42,7 +34,7 @@ export async function GET() {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
 
-  await fs.mkdir(IMAGES_ROOT, { recursive: true });
+  await ensureImagesRootForRead();
   const dirs = await collectDirs(IMAGES_ROOT, "");
   return NextResponse.json({ directories: ["", ...dirs] });
 }
@@ -81,7 +73,7 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const parentAbs = safeResolve(parent);
+  const parentAbs = resolveInImagesRoot(parent);
   if (!parentAbs) {
     return NextResponse.json({ error: "Invalid parent path" }, { status: 400 });
   }
@@ -92,17 +84,34 @@ export async function POST(request: NextRequest) {
   }
 
   try {
+    // Non-recursive: a pre-existing directory throws EEXIST -> 409. The mkdir
+    // stays inline here (right after the containment check above) so the
+    // path-traversal barrier is local. The images root and parent already exist
+    // (GET ensures the root; the UI only creates inside an existing directory).
     await fs.mkdir(newAbs);
     return NextResponse.json({ ok: true });
-  } catch (err: unknown) {
-    if (
-      err instanceof Error &&
-      "code" in err &&
-      (err as NodeJS.ErrnoException).code === "EEXIST"
-    ) {
+  } catch (err) {
+    const e = err as NodeJS.ErrnoException;
+    if (e.code === "EEXIST") {
       return NextResponse.json(
         { error: "Directory already exists" },
         { status: 409 },
+      );
+    }
+    // Path passed as a separate argument so a tainted value cannot act as a
+    // format directive.
+    console.error(
+      "image-manager: failed to create directory:",
+      newAbs,
+      e.code,
+      e.message,
+    );
+    // A missing/read-only storage volume gets the clear, actionable message;
+    // anything else is an opaque failure.
+    if (isStorageUnavailableCode(e.code)) {
+      return NextResponse.json(
+        { error: storageUnavailableMessage(e.code) },
+        { status: 500 },
       );
     }
     return NextResponse.json(
@@ -152,7 +161,7 @@ export async function PATCH(request: NextRequest) {
     );
   }
 
-  const oldAbs = safeResolve(rel);
+  const oldAbs = resolveInImagesRoot(rel);
   if (!oldAbs || oldAbs === IMAGES_ROOT) {
     return NextResponse.json({ error: "Invalid path" }, { status: 400 });
   }
@@ -203,7 +212,7 @@ export async function DELETE(request: NextRequest) {
     );
   }
 
-  const absPath = safeResolve(rel);
+  const absPath = resolveInImagesRoot(rel);
   if (!absPath || absPath === IMAGES_ROOT) {
     return NextResponse.json({ error: "Invalid path" }, { status: 400 });
   }
