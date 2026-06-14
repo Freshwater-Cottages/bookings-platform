@@ -35,8 +35,8 @@ export async function saveClubTheme(input: ClubThemeUpdateInput) {
     select: { completedAt: true },
   });
   const completedAt = input.completeSetup
-    ? existing?.completedAt ?? new Date()
-    : existing?.completedAt ?? null;
+    ? (existing?.completedAt ?? new Date())
+    : (existing?.completedAt ?? null);
 
   const data = {
     brandGold: input.brandGold,
@@ -49,6 +49,7 @@ export async function saveClubTheme(input: ClubThemeUpdateInput) {
     headingFontKey: input.headingFontKey,
     bodyFontKey: input.bodyFontKey,
     logoDataUrl: input.logoDataUrl,
+    rawCss: input.rawCss ?? "",
     completedAt,
   };
 

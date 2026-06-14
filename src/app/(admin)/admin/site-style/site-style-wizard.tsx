@@ -5,6 +5,7 @@ import { useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
+  Code,
   ImageIcon,
   Palette,
   RotateCcw,
@@ -59,6 +60,7 @@ type SiteStyleWizardProps = {
 const steps = [
   { id: "colours", label: "Colours", icon: Palette },
   { id: "fonts", label: "Fonts", icon: Type },
+  { id: "raw-css", label: "Raw CSS", icon: Code },
   { id: "logo", label: "Logo", icon: ImageIcon },
   { id: "review", label: "Review", icon: CheckCircle2 },
 ] as const;
@@ -110,6 +112,7 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
     headingFontKey: initialTheme.headingFontKey,
     bodyFontKey: initialTheme.bodyFontKey,
     logoDataUrl: initialTheme.logoDataUrl,
+    rawCss: initialTheme.rawCss ?? "",
   });
   const [completedAt, setCompletedAt] = useState(initialTheme.completedAt);
   const [step, setStep] = useState<StepId>("colours");
@@ -134,8 +137,16 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
     setSavedMessage("");
   }
 
-  function updateFont(key: "headingFontKey" | "bodyFontKey", value: ClubThemeFontKey) {
+  function updateFont(
+    key: "headingFontKey" | "bodyFontKey",
+    value: ClubThemeFontKey,
+  ) {
     setValues((current) => ({ ...current, [key]: value }));
+    setSavedMessage("");
+  }
+
+  function updateRawCss(value: string) {
+    setValues((current) => ({ ...current, rawCss: value }));
     setSavedMessage("");
   }
 
@@ -153,7 +164,9 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
       });
       const body = await response.json().catch(() => null);
       if (!response.ok || !body?.theme) {
-        throw new Error(responseErrorMessage(body, "Failed to save site style"));
+        throw new Error(
+          responseErrorMessage(body, "Failed to save site style"),
+        );
       }
 
       const theme = body.theme as SiteStyleThemeResponse;
@@ -168,13 +181,18 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
         headingFontKey: theme.headingFontKey,
         bodyFontKey: theme.bodyFontKey,
         logoDataUrl: theme.logoDataUrl,
+        rawCss: theme.rawCss ?? "",
       });
       setCompletedAt(theme.completedAt);
-      setSavedMessage(completeSetup ? "Site style is complete." : "Site style saved.");
+      setSavedMessage(
+        completeSetup ? "Site style is complete." : "Site style saved.",
+      );
       return true;
     } catch (saveError) {
       setError(
-        saveError instanceof Error ? saveError.message : "Failed to save site style",
+        saveError instanceof Error
+          ? saveError.message
+          : "Failed to save site style",
       );
       return false;
     } finally {
@@ -248,7 +266,7 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
         </div>
       </CardHeader>
       <CardContent className="space-y-6">
-        <div className="grid gap-2 sm:grid-cols-4">
+        <div className="grid gap-2 sm:grid-cols-5">
           {steps.map((item) => {
             const Icon = item.icon;
             const active = item.id === step;
@@ -362,6 +380,30 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
               </div>
             )}
 
+            {step === "raw-css" && (
+              <div className="space-y-3">
+                <p className="text-sm text-slate-600">
+                  Add custom CSS rules that will be appended to the generated
+                  theme stylesheet on every public page. Use sparingly — prefer
+                  colour and font settings above where possible.
+                </p>
+                <textarea
+                  value={values.rawCss}
+                  onChange={(e) => updateRawCss(e.target.value)}
+                  rows={16}
+                  spellCheck={false}
+                  placeholder={`/* Example */\n.dynamic-header {\n  background: linear-gradient(135deg, #1a1a2e, #16213e);\n}`}
+                  className="w-full rounded-md border border-slate-300 bg-white p-3 font-mono text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-400"
+                />
+                {values.rawCss.length > 45_000 && (
+                  <p className="text-sm text-amber-700">
+                    {values.rawCss.length.toLocaleString()} / 50,000 characters
+                    used.
+                  </p>
+                )}
+              </div>
+            )}
+
             {step === "logo" && (
               <div className="space-y-4">
                 <input
@@ -391,7 +433,10 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
                       type="button"
                       variant="outline"
                       onClick={() => {
-                        setValues((current) => ({ ...current, logoDataUrl: null }));
+                        setValues((current) => ({
+                          ...current,
+                          logoDataUrl: null,
+                        }));
                         setSavedMessage("");
                       }}
                     >
@@ -423,13 +468,30 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
                   <div className="rounded-md border p-4">
                     <p className="text-sm font-medium text-slate-900">Logo</p>
                     <p className="mt-2 text-sm text-slate-600">
-                      {values.logoDataUrl ? "Custom logo stored" : "Club name fallback"}
+                      {values.logoDataUrl
+                        ? "Custom logo stored"
+                        : "Club name fallback"}
                     </p>
                   </div>
                 </div>
-                <pre className="max-h-40 overflow-auto rounded-md bg-slate-950 p-3 text-xs text-slate-100">
-                  {cssPreview}
-                </pre>
+                <div className="space-y-1">
+                  <p className="text-xs font-medium text-slate-700">
+                    Generated CSS
+                  </p>
+                  <pre className="max-h-40 overflow-auto rounded-md bg-slate-950 p-3 text-xs text-slate-100">
+                    {cssPreview}
+                  </pre>
+                </div>
+                {values.rawCss && (
+                  <div className="space-y-1">
+                    <p className="text-xs font-medium text-slate-700">
+                      Raw CSS
+                    </p>
+                    <pre className="max-h-40 overflow-auto rounded-md bg-slate-950 p-3 text-xs text-slate-100">
+                      {values.rawCss}
+                    </pre>
+                  </div>
+                )}
               </div>
             )}
           </section>
@@ -514,11 +576,19 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
               Back
             </Button>
             {stepIndex < steps.length - 1 ? (
-              <Button type="button" onClick={goNext} disabled={saving || hasFieldErrors}>
+              <Button
+                type="button"
+                onClick={goNext}
+                disabled={saving || hasFieldErrors}
+              >
                 {saving ? "Saving..." : "Save and next"}
               </Button>
             ) : (
-              <Button type="button" onClick={finish} disabled={saving || hasFieldErrors}>
+              <Button
+                type="button"
+                onClick={finish}
+                disabled={saving || hasFieldErrors}
+              >
                 {saving ? "Saving..." : "Finish setup"}
               </Button>
             )}
