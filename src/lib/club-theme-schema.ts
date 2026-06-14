@@ -67,6 +67,7 @@ export type ClubThemeValues = Record<ClubThemeColourKey, string> & {
   headingFontKey: ClubThemeFontKey;
   bodyFontKey: ClubThemeFontKey;
   logoDataUrl: string | null;
+  rawCss: string;
 };
 
 export const DEFAULT_CLUB_THEME_VALUES: ClubThemeValues = {
@@ -80,6 +81,7 @@ export const DEFAULT_CLUB_THEME_VALUES: ClubThemeValues = {
   headingFontKey: "LEAGUE_SPARTAN",
   bodyFontKey: "INTER",
   logoDataUrl: null,
+  rawCss: "",
 };
 
 export const TOKOROA_CLUB_THEME_VALUES: ClubThemeValues = {
@@ -93,6 +95,7 @@ export const TOKOROA_CLUB_THEME_VALUES: ClubThemeValues = {
   headingFontKey: "LEAGUE_SPARTAN",
   bodyFontKey: "INTER",
   logoDataUrl: null,
+  rawCss: "",
 };
 
 const HEX_COLOUR_PATTERN = /^#[0-9a-fA-F]{6}$/;
@@ -164,6 +167,7 @@ export const clubThemeUpdateSchema = z
     logoDataUrl: z
       .union([logoDataUrlSchema, z.literal(""), z.null()])
       .transform((value) => value || null),
+    rawCss: z.string().max(50_000).default(""),
     completeSetup: z.boolean().optional(),
   })
   .strict();
@@ -225,6 +229,7 @@ export function normaliseThemeValues(
       DEFAULT_CLUB_THEME_VALUES.bodyFontKey,
     ),
     logoDataUrl: sanitiseLogoDataUrl(value?.logoDataUrl),
+    rawCss: typeof value?.rawCss === "string" ? value.rawCss : "",
   };
 }
 
@@ -232,7 +237,8 @@ export function buildClubThemeCss(
   value: Partial<Record<keyof ClubThemeValues, unknown>> | null | undefined,
 ): string {
   const theme = normaliseThemeValues(value);
-  return `:root,.website-theme{--brand-gold:${theme.brandGold};--brand-charcoal:${theme.brandCharcoal};--brand-deep:${theme.brandDeep};--brand-ridge:${theme.brandRidge};--brand-mist:${theme.brandMist};--brand-snow:${theme.brandSnow};--brand-safety:${theme.brandSafety};--font-website-heading:var(${fontCssVariable(theme.headingFontKey)});--font-website-body:var(${fontCssVariable(theme.bodyFontKey)});}`;
+  const base = `:root,.website-theme{--brand-gold:${theme.brandGold};--brand-charcoal:${theme.brandCharcoal};--brand-deep:${theme.brandDeep};--brand-ridge:${theme.brandRidge};--brand-mist:${theme.brandMist};--brand-snow:${theme.brandSnow};--brand-safety:${theme.brandSafety};--font-website-heading:var(${fontCssVariable(theme.headingFontKey)});--font-website-body:var(${fontCssVariable(theme.bodyFontKey)});}`;
+  return theme.rawCss ? `${base}\n${theme.rawCss}` : base;
 }
 
 export type ContrastWarning = {

@@ -49,6 +49,7 @@ export async function saveClubTheme(input: ClubThemeUpdateInput) {
     headingFontKey: input.headingFontKey,
     bodyFontKey: input.bodyFontKey,
     logoDataUrl: input.logoDataUrl,
+    rawCss: input.rawCss ?? "",
     completedAt,
   };
 

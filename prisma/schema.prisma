@@ -2400,6 +2400,7 @@ model ClubTheme {
   headingFontKey ClubThemeFont @default(LEAGUE_SPARTAN)
   bodyFontKey    ClubThemeFont @default(INTER)
   logoDataUrl    String?
+  rawCss         String        @default("")
   completedAt    DateTime?
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
