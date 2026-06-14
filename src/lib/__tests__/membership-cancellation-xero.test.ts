@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   memberSubscriptionFindUnique: vi.fn(),
   xeroObjectLinkFindFirst: vi.fn(),
   xeroSyncOperationUpdate: vi.fn(),
+  xeroSyncOperationFindFirst: vi.fn(),
   callXeroApi: vi.fn(),
   getAuthenticatedXeroClient: vi.fn(),
   getResolvedAccountMapping: vi.fn(),
@@ -40,6 +41,7 @@ vi.mock("@/lib/prisma", () => ({
     },
     xeroSyncOperation: {
       update: mocks.xeroSyncOperationUpdate,
+      findFirst: mocks.xeroSyncOperationFindFirst,
     },
   },
 }));
@@ -119,6 +121,11 @@ describe("membership cancellation Xero operations", () => {
     mocks.upsertXeroObjectLink.mockResolvedValue({});
     mocks.xeroObjectLinkFindFirst.mockResolvedValue(null);
     mocks.xeroSyncOperationUpdate.mockResolvedValue({});
+    // Default: the cancellation credit note has already settled, so the contact
+    // archive guard lets archiving proceed. Tests override this to exercise the
+    // deferral path.
+    mocks.xeroSyncOperationFindFirst.mockResolvedValue({ status: "SUCCEEDED" });
+    mocks.failXeroSyncOperation.mockResolvedValue({});
     mocks.refreshXeroContactCachesFromContact.mockResolvedValue(undefined);
   });
 
@@ -350,6 +357,59 @@ describe("membership cancellation Xero operations", () => {
         ],
       },
       "contact:contact_1:membership-cancellation-archive:participant_1:v1",
+    );
+  });
+
+  it("defers archiving the Xero contact until the cancellation credit note has settled", async () => {
+    // The credit note's outbox operation is still pending, so archiving now
+    // would block it. The contact operation must fail (for retry) and leave the
+    // contact untouched rather than archive prematurely.
+    mocks.xeroSyncOperationFindFirst.mockResolvedValue({ status: "PENDING" });
+    mocks.memberFindUnique.mockResolvedValue({
+      id: "member_1",
+      firstName: "Alice",
+      lastName: "Smith",
+      ageTier: "ADULT",
+      xeroContactId: "contact_1",
+    });
+    mocks.loadMembershipCancellationSettings.mockResolvedValue({
+      warningText: "",
+      rejoinProcessText: "",
+      xeroArchiveContactsOnCancellation: true,
+      xeroContactGroups: [{ groupId: "cancelled_group", groupName: "Cancelled" }],
+    });
+    mocks.getAgeTierXeroContactGroupMappings.mockResolvedValue([
+      { tier: "ADULT", groupId: "adult_group", groupName: "Adults" },
+    ]);
+    mocks.getContact.mockResolvedValue({
+      body: {
+        contacts: [
+          {
+            contactID: "contact_1",
+            contactStatus: Contact.ContactStatusEnum.ACTIVE,
+            contactGroups: [{ contactGroupID: "adult_group", name: "Adults" }],
+          },
+        ],
+      },
+    });
+
+    await expect(
+      syncXeroMembershipCancellationContact({
+        memberId: "member_1",
+        requestId: "request_1",
+        participantId: "participant_1",
+        syncOperationId: "op_1",
+      }),
+    ).rejects.toThrow(/credit note/i);
+
+    // No contact mutation while deferring: no archive, no group changes.
+    expect(mocks.updateContact).not.toHaveBeenCalled();
+    expect(mocks.deleteContactGroupContact).not.toHaveBeenCalled();
+    expect(mocks.createContactGroupContacts).not.toHaveBeenCalled();
+    // Operation is failed so it is retried after the credit note posts.
+    expect(mocks.failXeroSyncOperation).toHaveBeenCalledWith(
+      "op_1",
+      expect.any(Error),
     );
   });
 
