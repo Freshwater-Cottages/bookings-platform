@@ -9,6 +9,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 import {
   AlignCenter,
   AlignLeft,
@@ -16,6 +17,7 @@ import {
   ArrowRight,
   Edit3,
   FileText,
+  Folder,
   ListOrdered,
   List,
   Loader2,
@@ -28,6 +30,13 @@ import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Card,
@@ -44,6 +53,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import type { EditablePageRecord } from "@/lib/page-content";
+import { isSystemPageSlug, SYSTEM_PAGE_SLUGS } from "@/lib/page-content";
 
 function stripHtml(html: string): string {
   return html
@@ -81,8 +91,13 @@ type MediaImageSummary = {
 type PickerImage = {
   url: string;
   label: string;
-  source: "uploaded" | "branding";
+  source: "uploaded" | "branding" | "filesystem";
   id?: string;
+};
+
+type FilesystemImageEntry = {
+  filename: string;
+  url: string;
 };
 
 const UPLOADABLE_IMAGE_TYPES =
@@ -117,13 +132,45 @@ export const WysiwygEditor = forwardRef<
   const [uploading, setUploading] = useState(false);
   const [imageFilter, setImageFilter] = useState("");
   const [selectedImagePath, setSelectedImagePath] = useState("");
+  const [pickerDir, setPickerDir] = useState("__root__");
+  const [pickerDirs, setPickerDirs] = useState<string[]>(["__root__"]);
+  const [loadingPickerDirs, setLoadingPickerDirs] = useState(false);
+  const [filesystemImages, setFilesystemImages] = useState<
+    FilesystemImageEntry[]
+  >([]);
+  const [loadingFilesystemImages, setLoadingFilesystemImages] = useState(false);
+  const [imageWidth, setImageWidth] = useState("");
+  const [imageHeight, setImageHeight] = useState("");
   const [mountTick, setMountTick] = useState(0);
+  const [resizeRect, setResizeRect] = useState<{
+    top: number;
+    left: number;
+    width: number;
+    height: number;
+  } | null>(null);
   const editorDivRef = useRef<HTMLDivElement | null>(null);
   const selectionRef = useRef<Range | null>(null);
   const debounceRef = useRef<number | null>(null);
+  const resizeTargetRef = useRef<HTMLImageElement | null>(null);
+  const dragStateRef = useRef<{
+    handle: string;
+    startX: number;
+    startY: number;
+    startW: number;
+    startH: number;
+  } | null>(null);
   const imageFileInputRef = useRef<HTMLInputElement | null>(null);
 
   const pickerImages = useMemo<PickerImage[]>(() => {
+    const filesystem: PickerImage[] = filesystemImages.map((img) => ({
+      url: img.url,
+      label: img.filename,
+      source: "filesystem",
+    }));
+    // Only show uploaded + branding sources when viewing the root directory
+    if (pickerDir !== "__root__") {
+      return filesystem;
+    }
     const uploaded: PickerImage[] = uploadedImages.map((image) => ({
       url: image.url,
       label: image.filename,
@@ -135,15 +182,17 @@ export const WysiwygEditor = forwardRef<
       label: path,
       source: "branding",
     }));
-    return [...uploaded, ...branding];
-  }, [siteImages, uploadedImages]);
+    return [...uploaded, ...branding, ...filesystem];
+  }, [siteImages, uploadedImages, filesystemImages, pickerDir]);
 
   const filteredPickerImages = useMemo(() => {
     const needle = imageFilter.trim().toLowerCase();
     if (!needle) {
       return pickerImages;
     }
-    return pickerImages.filter((img) => img.label.toLowerCase().includes(needle));
+    return pickerImages.filter((img) =>
+      img.label.toLowerCase().includes(needle),
+    );
   }, [imageFilter, pickerImages]);
 
   const setEditorNode = useCallback((node: HTMLDivElement | null) => {
@@ -178,6 +227,33 @@ export const WysiwygEditor = forwardRef<
         window.clearTimeout(debounceRef.current);
     };
   }, []);
+
+  // Keep resize overlay in sync when the editor scrolls.
+  useEffect(() => {
+    const editor = editorDivRef.current;
+    if (!editor) return;
+    function onScroll() {
+      const img = resizeTargetRef.current;
+      if (!img) return;
+      const r = img.getBoundingClientRect();
+      setResizeRect({
+        top: r.top,
+        left: r.left,
+        width: r.width,
+        height: r.height,
+      });
+    }
+    editor.addEventListener("scroll", onScroll);
+    return () => editor.removeEventListener("scroll", onScroll);
+  }, [mountTick]);
+
+  // Clear resize overlay when switching to HTML mode.
+  useEffect(() => {
+    if (showHtmlFallback) {
+      resizeTargetRef.current = null;
+      setResizeRect(null);
+    }
+  }, [showHtmlFallback]);
 
   useEffect(() => {
     if (!imagePickerOpen) {
@@ -241,12 +317,149 @@ export const WysiwygEditor = forwardRef<
     };
   }, [imagePickerOpen]);
 
+  // Load directories for the filesystem picker
   useEffect(() => {
-    if (!imagePickerOpen || loadingSiteImages || loadingUploadedImages) {
+    if (!imagePickerOpen) return;
+
+    let cancelled = false;
+    setLoadingPickerDirs(true);
+    fetch("/api/admin/image-manager/directories", {
+      credentials: "same-origin",
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((body) => {
+        if (cancelled) return;
+        const dirs = Array.isArray(body?.directories)
+          ? (body.directories as string[])
+          : [""];
+        setPickerDirs(dirs.map((d) => (d === "" ? "__root__" : d)));
+      })
+      .catch(() => {
+        if (!cancelled) setPickerDirs(["__root__"]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingPickerDirs(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [imagePickerOpen]);
+
+  // Load filesystem images for the selected directory
+  useEffect(() => {
+    if (!imagePickerOpen) return;
+
+    let cancelled = false;
+    setFilesystemImages([]);
+    setLoadingFilesystemImages(true);
+    const apiDir = pickerDir === "__root__" ? "" : pickerDir;
+    fetch(`/api/admin/image-manager/images?dir=${encodeURIComponent(apiDir)}`, {
+      credentials: "same-origin",
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((body) => {
+        if (cancelled) return;
+        const imgs = Array.isArray(body?.images)
+          ? (body.images as FilesystemImageEntry[])
+          : [];
+        setFilesystemImages(imgs);
+      })
+      .catch(() => {
+        if (!cancelled) setFilesystemImages([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingFilesystemImages(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [imagePickerOpen, pickerDir]);
+
+  useEffect(() => {
+    if (
+      !imagePickerOpen ||
+      loadingSiteImages ||
+      loadingUploadedImages ||
+      loadingFilesystemImages
+    ) {
       return;
     }
     setSelectedImagePath((current) => current || pickerImages[0]?.url || "");
-  }, [imagePickerOpen, loadingSiteImages, loadingUploadedImages, pickerImages]);
+  }, [
+    imagePickerOpen,
+    loadingSiteImages,
+    loadingUploadedImages,
+    loadingFilesystemImages,
+    pickerImages,
+  ]);
+
+  function handleEditorClick(e: React.MouseEvent<HTMLDivElement>) {
+    const target = e.target as HTMLElement;
+    if (target.tagName === "IMG") {
+      const img = target as HTMLImageElement;
+      resizeTargetRef.current = img;
+      const r = img.getBoundingClientRect();
+      setResizeRect({
+        top: r.top,
+        left: r.left,
+        width: r.width,
+        height: r.height,
+      });
+    } else {
+      resizeTargetRef.current = null;
+      setResizeRect(null);
+    }
+  }
+
+  function startHandleDrag(e: React.MouseEvent, handle: string) {
+    e.preventDefault();
+    e.stopPropagation();
+    const img = resizeTargetRef.current;
+    if (!img) return;
+    const r = img.getBoundingClientRect();
+    dragStateRef.current = {
+      handle,
+      startX: e.clientX,
+      startY: e.clientY,
+      startW: r.width,
+      startH: r.height,
+    };
+
+    function onMouseMove(ev: MouseEvent) {
+      const target = resizeTargetRef.current;
+      const ds = dragStateRef.current;
+      if (!target || !ds) return;
+      const dx = ev.clientX - ds.startX;
+      const dy = ev.clientY - ds.startY;
+      let newW = ds.startW;
+      let newH = ds.startH;
+      if (ds.handle.includes("e")) newW = Math.max(20, ds.startW + dx);
+      if (ds.handle.includes("w")) newW = Math.max(20, ds.startW - dx);
+      if (ds.handle.includes("s")) newH = Math.max(20, ds.startH + dy);
+      if (ds.handle.includes("n")) newH = Math.max(20, ds.startH - dy);
+      target.style.width = `${Math.round(newW)}px`;
+      target.style.height = `${Math.round(newH)}px`;
+      const rr = target.getBoundingClientRect();
+      setResizeRect({
+        top: rr.top,
+        left: rr.left,
+        width: rr.width,
+        height: rr.height,
+      });
+    }
+
+    function onMouseUp() {
+      dragStateRef.current = null;
+      onChange(editorDivRef.current?.innerHTML ?? "");
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+    }
+
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+  }
 
   function captureSelection() {
     if (showHtmlFallback) return;
@@ -299,14 +512,46 @@ export const WysiwygEditor = forwardRef<
     if (showHtmlFallback) return;
     captureSelection();
     setImageFilter("");
+    setPickerDir("__root__");
+    setImageWidth("");
+    setImageHeight("");
     setImagePickerOpen(true);
   }
 
   function insertSelectedImage() {
-    if (!selectedImagePath) {
-      return;
+    if (!selectedImagePath) return;
+
+    // Restore saved selection then insert manually so we can set size attributes.
+    const selection = window.getSelection();
+    if (selectionRef.current && selection) {
+      selection.removeAllRanges();
+      selection.addRange(selectionRef.current);
     }
-    runCommand("insertImage", selectedImagePath);
+    editorDivRef.current?.focus();
+
+    const img = document.createElement("img");
+    img.src = selectedImagePath;
+    const w = imageWidth.trim();
+    const h = imageHeight.trim();
+    if (w) img.style.width = /^\d+$/.test(w) ? `${w}px` : w;
+    if (h) img.style.height = /^\d+$/.test(h) ? `${h}px` : h;
+
+    // Insert the element at the current caret position.
+    const range =
+      selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
+    if (range) {
+      range.deleteContents();
+      range.insertNode(img);
+      range.setStartAfter(img);
+      range.collapse(true);
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+    } else {
+      editorDivRef.current?.appendChild(img);
+    }
+
+    captureSelection();
+    onChange(editorDivRef.current?.innerHTML ?? "");
     setImagePickerOpen(false);
   }
 
@@ -348,9 +593,7 @@ export const WysiwygEditor = forwardRef<
     event: React.MouseEvent,
   ) {
     event.stopPropagation();
-    if (
-      !window.confirm(`Delete ${image.filename}? This cannot be undone.`)
-    ) {
+    if (!window.confirm(`Delete ${image.filename}? This cannot be undone.`)) {
       return;
     }
 
@@ -645,23 +888,51 @@ export const WysiwygEditor = forwardRef<
           onMouseUp={captureSelection}
           onBlur={captureSelection}
           onInput={onInput}
+          onClick={handleEditorClick}
           className={`${editorClassName} overflow-y-auto rounded-md border border-slate-300 bg-white p-3 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-400 [&_a]:text-blue-700 [&_a]:underline [&_a]:decoration-blue-400 [&_b]:font-bold [&_blockquote]:my-3 [&_blockquote]:border-l-4 [&_blockquote]:border-slate-300 [&_blockquote]:pl-3 [&_blockquote]:italic [&_code]:rounded [&_code]:bg-slate-100 [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_em]:italic [&_h1]:mt-4 [&_h1]:mb-2 [&_h1]:text-3xl [&_h1]:font-bold [&_h2]:mt-4 [&_h2]:mb-2 [&_h2]:text-2xl [&_h2]:font-bold [&_h3]:mt-3 [&_h3]:mb-2 [&_h3]:text-xl [&_h3]:font-semibold [&_hr]:my-4 [&_hr]:border-slate-300 [&_i]:italic [&_li]:my-1 [&_ol]:my-3 [&_ol]:list-decimal [&_ol]:pl-6 [&_p]:my-2 [&_pre]:my-3 [&_pre]:overflow-x-auto [&_pre]:rounded [&_pre]:bg-slate-100 [&_pre]:p-3 [&_pre]:font-mono [&_strong]:font-bold [&_table]:my-3 [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-slate-300 [&_td]:p-2 [&_th]:border [&_th]:border-slate-300 [&_th]:bg-slate-100 [&_th]:p-2 [&_u]:underline [&_ul]:my-3 [&_ul]:list-disc [&_ul]:pl-6`}
         />
       )}
 
       <Dialog open={imagePickerOpen} onOpenChange={setImagePickerOpen}>
-        <DialogContent className="max-h-[80vh] overflow-y-auto sm:max-w-2xl">
-          <DialogHeader>
+        <DialogContent className="flex max-h-[85vh] flex-col overflow-hidden sm:max-w-3xl">
+          <DialogHeader className="shrink-0">
             <DialogTitle>Insert Image</DialogTitle>
             <DialogDescription>
               Pick an uploaded image, an image deployed with the site
-              (public/branding), or upload a new image (PNG, JPEG, GIF,
-              WebP, AVIF, or SVG, up to 2MB).
+              (public/branding), or upload a new image (PNG, JPEG, GIF, WebP,
+              AVIF, or SVG, up to 2MB).
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-3">
-            <div className="flex items-center gap-2">
+          <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
+            {/* Directory selector */}
+            <div className="flex shrink-0 items-center gap-2">
+              <Folder className="h-4 w-4 shrink-0 text-slate-400" />
+              <Select
+                value={pickerDir}
+                onValueChange={(val) => {
+                  setPickerDir(val);
+                  setSelectedImagePath("");
+                }}
+                disabled={loadingPickerDirs}
+              >
+                <SelectTrigger className="flex-1 text-xs">
+                  <SelectValue placeholder="Select folder…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {pickerDirs.map((dir) => (
+                    <SelectItem key={dir} value={dir} className="text-xs">
+                      {dir === "__root__"
+                        ? "images/ (root)"
+                        : dir.replace(/\//g, " / ")}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Filter + upload row */}
+            <div className="flex shrink-0 items-center gap-2">
               <Input
                 value={imageFilter}
                 onChange={(event) => setImageFilter(event.target.value)}
@@ -696,76 +967,151 @@ export const WysiwygEditor = forwardRef<
               </Button>
             </div>
 
-            <div className="max-h-64 overflow-y-auto rounded-md border border-slate-200">
-              {loadingSiteImages || loadingUploadedImages ? (
-                <p className="p-3 text-sm text-slate-500">Loading images...</p>
+            {/* Thumbnail grid */}
+            <div className="min-h-0 flex-1 overflow-y-auto rounded-md border border-slate-200 bg-slate-50 p-2">
+              {loadingSiteImages ||
+              loadingUploadedImages ||
+              loadingFilesystemImages ? (
+                <p className="p-3 text-sm text-slate-500">Loading images…</p>
               ) : filteredPickerImages.length === 0 ? (
                 <p className="p-3 text-sm text-slate-500">
                   No images found. Upload one to get started.
                 </p>
               ) : (
-                <div className="divide-y divide-slate-200">
-                  {filteredPickerImages.map((image) => (
-                    <div
-                      key={`${image.source}:${image.url}`}
-                      className={`flex w-full items-center justify-between gap-2 px-3 py-2 text-sm transition-colors hover:bg-slate-50 ${
-                        selectedImagePath === image.url
-                          ? "bg-slate-100 font-medium text-slate-900"
-                          : "text-slate-700"
-                      }`}
-                    >
-                      <button
-                        type="button"
-                        onClick={() => setSelectedImagePath(image.url)}
-                        className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                <div className="grid grid-cols-[repeat(auto-fill,minmax(120px,1fr))] gap-2">
+                  {filteredPickerImages.map((image) => {
+                    const isSelected = selectedImagePath === image.url;
+                    const shortLabel = image.label.includes("/")
+                      ? (image.label.split("/").pop() ?? image.label)
+                      : image.label;
+                    return (
+                      <div
+                        key={`${image.source}:${image.url}`}
+                        className={`group relative cursor-pointer overflow-hidden rounded-lg border-2 bg-white shadow-sm transition-all ${
+                          isSelected
+                            ? "border-blue-500 ring-2 ring-blue-200"
+                            : "border-slate-200 hover:border-slate-400 hover:shadow-md"
+                        }`}
+                        onClick={() => {
+                          setSelectedImagePath(image.url);
+                          setImageWidth("");
+                          setImageHeight("");
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            setSelectedImagePath(image.url);
+                            setImageWidth("");
+                            setImageHeight("");
+                          }
+                        }}
+                        role="button"
+                        tabIndex={0}
+                        aria-pressed={isSelected}
+                        aria-label={shortLabel}
                       >
-                        <Badge
-                          variant={image.source === "uploaded" ? "default" : "secondary"}
-                          className="shrink-0 text-[10px] uppercase"
-                        >
-                          {image.source === "uploaded" ? "Uploaded" : "Branding"}
-                        </Badge>
-                        <span className="truncate">{image.label}</span>
-                      </button>
-                      {image.source === "uploaded" ? (
-                        <button
-                          type="button"
-                          aria-label={`Delete ${image.label}`}
-                          title={`Delete ${image.label}`}
-                          onClick={(event) => {
-                            const uploaded = uploadedImages.find(
-                              (item) => item.id === image.id,
-                            );
-                            if (uploaded) {
-                              void deleteUploadedImage(uploaded, event);
+                        {/* Thumbnail */}
+                        <div className="relative aspect-square overflow-hidden bg-slate-100">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={image.url}
+                            alt={shortLabel}
+                            className="h-full w-full object-cover"
+                            loading="lazy"
+                          />
+                          {/* Delete button (uploaded only — filesystem images are managed via Image Manager) */}
+                          {image.source === "uploaded" ? (
+                            <button
+                              type="button"
+                              aria-label={`Delete ${shortLabel}`}
+                              title={`Delete ${shortLabel}`}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                const uploaded = uploadedImages.find(
+                                  (item) => item.id === image.id,
+                                );
+                                if (uploaded) {
+                                  void deleteUploadedImage(uploaded, event);
+                                }
+                              }}
+                              className="absolute right-1 top-1 rounded-full bg-white/80 p-1 opacity-0 shadow-sm transition-opacity hover:bg-red-50 group-hover:opacity-100"
+                            >
+                              <Trash2 className="h-3 w-3 text-red-500" />
+                            </button>
+                          ) : null}
+                        </div>
+
+                        {/* Label row */}
+                        <div className="p-1.5">
+                          <p
+                            className="truncate text-xs font-medium text-slate-800"
+                            title={image.label}
+                          >
+                            {shortLabel}
+                          </p>
+                          <Badge
+                            variant={
+                              image.source === "uploaded"
+                                ? "default"
+                                : image.source === "filesystem"
+                                  ? "outline"
+                                  : "secondary"
                             }
-                          }}
-                          className="shrink-0 rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-600"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      ) : null}
-                    </div>
-                  ))}
+                            className="mt-0.5 text-[9px] uppercase"
+                          >
+                            {image.source === "uploaded"
+                              ? "Uploaded"
+                              : image.source === "filesystem"
+                                ? "Images"
+                                : "Branding"}
+                          </Badge>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
 
+            {/* Selected path strip + resize inputs */}
             {selectedImagePath ? (
-              <div className="space-y-2 rounded-md border border-slate-200 p-3">
-                <p className="text-xs text-slate-500">Preview</p>
-                <img
-                  src={selectedImagePath}
-                  alt="Selected site image"
-                  className="max-h-52 w-auto rounded border border-slate-200"
-                />
-                <p className="truncate text-xs text-slate-600">
-                  {selectedImagePath}
+              <div className="shrink-0 space-y-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
+                <div className="flex items-center gap-2">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={selectedImagePath}
+                    alt="Selected"
+                    className="h-10 w-10 shrink-0 rounded border border-slate-200 object-cover"
+                  />
+                  <p className="min-w-0 flex-1 truncate text-xs text-slate-600">
+                    {selectedImagePath}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="shrink-0 text-xs text-slate-500">Size:</span>
+                  <Input
+                    value={imageWidth}
+                    onChange={(e) => setImageWidth(e.target.value)}
+                    placeholder="Width (e.g. 300 or 50%)"
+                    className="h-7 flex-1 text-xs"
+                  />
+                  <span className="shrink-0 text-xs text-slate-400">×</span>
+                  <Input
+                    value={imageHeight}
+                    onChange={(e) => setImageHeight(e.target.value)}
+                    placeholder="Height (optional)"
+                    className="h-7 flex-1 text-xs"
+                  />
+                </div>
+                <p className="text-[10px] text-slate-400">
+                  Enter a number (pixels) or percentage, e.g. 300 or 50%. Leave
+                  blank for natural size.
                 </p>
               </div>
             ) : null}
 
-            <div className="flex justify-end gap-2">
+            {/* Footer */}
+            <div className="flex shrink-0 justify-end gap-2">
               <Button
                 type="button"
                 variant="outline"
@@ -784,6 +1130,120 @@ export const WysiwygEditor = forwardRef<
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Drag-resize overlay — rendered in a portal so it escapes any stacking context */}
+      {resizeRect &&
+        !showHtmlFallback &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div
+            style={{
+              position: "fixed",
+              top: resizeRect.top,
+              left: resizeRect.left,
+              width: resizeRect.width,
+              height: resizeRect.height,
+              zIndex: 99999,
+              pointerEvents: "none",
+            }}
+          >
+            {/* Selection border */}
+            <div
+              style={{
+                position: "absolute",
+                inset: 0,
+                border: "2px solid #3b82f6",
+                boxSizing: "border-box",
+              }}
+            />
+            {/* Size label */}
+            <div
+              style={{
+                position: "absolute",
+                top: -22,
+                left: 0,
+                background: "#3b82f6",
+                color: "white",
+                fontSize: 11,
+                padding: "2px 6px",
+                borderRadius: 3,
+                whiteSpace: "nowrap",
+                pointerEvents: "none",
+              }}
+            >
+              {Math.round(resizeRect.width)} × {Math.round(resizeRect.height)}{" "}
+              px
+            </div>
+            {/* 8 resize handles */}
+            {(
+              [
+                { h: "nw", style: { top: -5, left: -5, cursor: "nw-resize" } },
+                {
+                  h: "n",
+                  style: {
+                    top: -5,
+                    left: "50%",
+                    transform: "translateX(-50%)",
+                    cursor: "n-resize",
+                  },
+                },
+                { h: "ne", style: { top: -5, right: -5, cursor: "ne-resize" } },
+                {
+                  h: "e",
+                  style: {
+                    top: "50%",
+                    right: -5,
+                    transform: "translateY(-50%)",
+                    cursor: "e-resize",
+                  },
+                },
+                {
+                  h: "se",
+                  style: { bottom: -5, right: -5, cursor: "se-resize" },
+                },
+                {
+                  h: "s",
+                  style: {
+                    bottom: -5,
+                    left: "50%",
+                    transform: "translateX(-50%)",
+                    cursor: "s-resize",
+                  },
+                },
+                {
+                  h: "sw",
+                  style: { bottom: -5, left: -5, cursor: "sw-resize" },
+                },
+                {
+                  h: "w",
+                  style: {
+                    top: "50%",
+                    left: -5,
+                    transform: "translateY(-50%)",
+                    cursor: "w-resize",
+                  },
+                },
+              ] as const
+            ).map(({ h, style }) => (
+              <div
+                key={h}
+                style={{
+                  position: "absolute",
+                  width: 10,
+                  height: 10,
+                  background: "white",
+                  border: "2px solid #3b82f6",
+                  borderRadius: 2,
+                  boxSizing: "border-box",
+                  pointerEvents: "all",
+                  ...style,
+                }}
+                onMouseDown={(e) => startHandleDrag(e, h)}
+              />
+            ))}
+          </div>,
+          document.body,
+        )}
     </div>
   );
 });
@@ -850,7 +1310,8 @@ export function PageContentPanel() {
     setDraftTitle(page.title);
     setDraftHeaderText(page.headerText ?? "");
     setDraftSlug(page.slug);
-    setDraftSortOrder(page.sortOrder);
+    // Always use the canonical sort order for system pages regardless of DB value.
+    setDraftSortOrder(SYSTEM_PAGE_SLUGS.get(page.slug) ?? page.sortOrder);
     setDraftContent(page.contentHtml ?? "");
     setDialogOpen(true);
   }
@@ -999,6 +1460,7 @@ export function PageContentPanel() {
         {pages.map((page) => {
           const textPreview = stripHtml(page.contentHtml);
           const hasContent = textPreview.length > 0;
+          const isSystem = isSystemPageSlug(page.slug);
 
           return (
             <Card key={page.slug}>
@@ -1008,9 +1470,19 @@ export function PageContentPanel() {
                     <CardTitle>{page.title}</CardTitle>
                     <CardDescription>{page.path}</CardDescription>
                   </div>
-                  <Badge variant={hasContent ? "default" : "secondary"}>
-                    {hasContent ? "Has content" : "Empty"}
-                  </Badge>
+                  <div className="flex shrink-0 flex-col items-end gap-1">
+                    {isSystem && (
+                      <Badge
+                        variant="outline"
+                        className="text-[10px] uppercase text-slate-500"
+                      >
+                        System
+                      </Badge>
+                    )}
+                    <Badge variant={hasContent ? "default" : "secondary"}>
+                      {hasContent ? "Has content" : "Empty"}
+                    </Badge>
+                  </div>
                 </div>
               </CardHeader>
               <CardContent className="space-y-3">
@@ -1140,6 +1612,11 @@ export function PageContentPanel() {
                 <label className="space-y-1">
                   <span className="text-xs font-medium text-slate-700">
                     Slug
+                    {isSystemPageSlug(selectedPage.slug) && (
+                      <span className="ml-2 rounded bg-slate-200 px-1 py-0.5 text-[10px] font-normal text-slate-500">
+                        fixed
+                      </span>
+                    )}
                   </span>
                   <Input
                     value={draftSlug}
@@ -1147,11 +1624,22 @@ export function PageContentPanel() {
                       setDraftSlug(event.target.value.trim().toLowerCase())
                     }
                     placeholder="page-slug"
+                    readOnly={isSystemPageSlug(selectedPage.slug)}
+                    className={
+                      isSystemPageSlug(selectedPage.slug)
+                        ? "cursor-not-allowed bg-slate-100 opacity-70"
+                        : ""
+                    }
                   />
                 </label>
                 <label className="space-y-1">
                   <span className="text-xs font-medium text-slate-700">
                     Menu order
+                    {isSystemPageSlug(selectedPage.slug) && (
+                      <span className="ml-2 rounded bg-slate-200 px-1 py-0.5 text-[10px] font-normal text-slate-500">
+                        fixed at {SYSTEM_PAGE_SLUGS.get(selectedPage.slug)}
+                      </span>
+                    )}
                   </span>
                   <Input
                     type="number"
@@ -1162,6 +1650,12 @@ export function PageContentPanel() {
                       )
                     }
                     min={0}
+                    readOnly={isSystemPageSlug(selectedPage.slug)}
+                    className={
+                      isSystemPageSlug(selectedPage.slug)
+                        ? "cursor-not-allowed bg-slate-100 opacity-70"
+                        : ""
+                    }
                   />
                 </label>
                 <div className="md:col-span-2 text-xs text-slate-600">

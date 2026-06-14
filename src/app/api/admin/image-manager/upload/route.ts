@@ -1,0 +1,136 @@
+import { NextRequest, NextResponse } from "next/server";
+import { requireAdmin } from "@/lib/session-guards";
+import fs from "fs/promises";
+import path from "path";
+
+const IMAGES_ROOT = path.join(process.cwd(), "public", "images");
+
+const ALLOWED_MIME = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/gif",
+  "image/webp",
+  "image/avif",
+  "image/svg+xml",
+]);
+
+const ALLOWED_EXTS = new Set([
+  ".jpg",
+  ".jpeg",
+  ".png",
+  ".gif",
+  ".webp",
+  ".avif",
+  ".svg",
+]);
+
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB per file
+
+function safeResolve(rel: string): string | null {
+  const normalized = path.normalize(rel);
+  const resolved = path.resolve(IMAGES_ROOT, normalized);
+  if (
+    resolved !== IMAGES_ROOT &&
+    !resolved.startsWith(IMAGES_ROOT + path.sep)
+  ) {
+    return null;
+  }
+  return resolved;
+}
+
+function sanitizeFilename(name: string): string {
+  // Strip any path components, then replace unsafe characters
+  const base = path.basename(name);
+  return (
+    base
+      .replace(/[<>:"|?*\x00-\x1F]/g, "_")
+      .replace(/\.{2,}/g, ".")
+      .substring(0, 200)
+      .trim() || "image"
+  );
+}
+
+// POST /api/admin/image-manager/upload – upload one or more image files
+export async function POST(request: NextRequest) {
+  const guard = await requireAdmin();
+  if (!guard.ok) return guard.response;
+
+  let formData: FormData;
+  try {
+    formData = await request.formData();
+  } catch {
+    return NextResponse.json({ error: "Invalid form data" }, { status: 400 });
+  }
+
+  const dir =
+    typeof formData.get("dir") === "string"
+      ? (formData.get("dir") as string)
+      : "";
+  const files = formData.getAll("files") as File[];
+
+  if (!files.length) {
+    return NextResponse.json({ error: "No files provided" }, { status: 400 });
+  }
+
+  const absDir = safeResolve(dir);
+  if (!absDir) {
+    return NextResponse.json({ error: "Invalid directory" }, { status: 400 });
+  }
+
+  await fs.mkdir(absDir, { recursive: true });
+
+  const results: Array<{ filename: string; ok: boolean; error?: string }> = [];
+
+  for (const file of files) {
+    if (!ALLOWED_MIME.has(file.type)) {
+      results.push({
+        filename: file.name,
+        ok: false,
+        error: "Unsupported file type",
+      });
+      continue;
+    }
+
+    if (file.size > MAX_FILE_SIZE) {
+      results.push({
+        filename: file.name,
+        ok: false,
+        error: "File exceeds 10 MB limit",
+      });
+      continue;
+    }
+
+    const ext = path.extname(file.name).toLowerCase();
+    if (!ALLOWED_EXTS.has(ext)) {
+      results.push({
+        filename: file.name,
+        ok: false,
+        error: "Unsupported file extension",
+      });
+      continue;
+    }
+
+    const safeName = sanitizeFilename(file.name);
+    const filePath = path.join(absDir, safeName);
+
+    // Double-check resolved path stays inside images root
+    if (filePath !== absDir && !filePath.startsWith(absDir + path.sep)) {
+      results.push({ filename: file.name, ok: false, error: "Invalid path" });
+      continue;
+    }
+
+    try {
+      const buffer = Buffer.from(await file.arrayBuffer());
+      await fs.writeFile(filePath, buffer);
+      results.push({ filename: safeName, ok: true });
+    } catch {
+      results.push({
+        filename: file.name,
+        ok: false,
+        error: "Failed to save file",
+      });
+    }
+  }
+
+  return NextResponse.json({ results });
+}
