@@ -97,4 +97,14 @@ export const starterPageContent: StarterPageContent[] = [
     sortOrder: 30,
     contentHtml: "{{committee-members-cards}}",
   },
+  {
+    slug: "404",
+    path: "/404",
+    caption: "Page not found",
+    menuTitle: "404",
+    title: "Page Not Found",
+    headerText: "The page you are looking for does not exist.",
+    sortOrder: 30,
+    contentHtml: "<h2>Page Not Found</h2>",
+  },
 ];
