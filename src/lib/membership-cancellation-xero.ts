@@ -27,6 +27,7 @@ import {
   getResolvedAccountMapping,
   refreshXeroContactCachesFromContact,
 } from "@/lib/xero";
+import { XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CREDIT_NOTE_TYPE } from "@/lib/xero-operation-outbox-payload";
 
 const MEMBERSHIP_CANCELLATION_CREDIT_ROLE = "MEMBERSHIP_CANCELLATION_CREDIT_NOTE";
 const MEMBERSHIP_CANCELLATION_CREDIT_ALLOCATION_ROLE =
@@ -390,6 +391,8 @@ export async function createXeroMembershipCancellationCreditNote(
   );
   let creditOperationId = operationId;
   const requestPayload = {
+    queueType: XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CREDIT_NOTE_TYPE,
+    subscriptionId: subscription.id,
     creditNotes: [buildCreditNote()],
     allocation: {
       invoiceId,
@@ -657,6 +660,48 @@ async function allocateMembershipCancellationCreditNote(params: {
   }
 }
 
+/**
+ * The membership cancellation credit note must reach Xero before the member's
+ * contact is archived: Xero rejects credit notes raised against an archived
+ * contact. Returns true once the credit note's outbox operation has settled,
+ * i.e. SUCCEEDED (note created, or deliberately skipped) or PARTIAL (note
+ * created, only the allocation still outstanding), and true when no credit note
+ * operation exists for the cancellation (nothing is owed).
+ */
+async function isMembershipCancellationCreditNoteSettled(
+  participantId: string,
+): Promise<boolean> {
+  const creditOperation = await prisma.xeroSyncOperation.findFirst({
+    where: {
+      direction: "OUTBOUND",
+      entityType: "CREDIT_NOTE",
+      operationType: "CREATE",
+      AND: [
+        {
+          requestPayload: {
+            path: ["queueType"],
+            equals: XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CREDIT_NOTE_TYPE,
+          },
+        },
+        {
+          requestPayload: {
+            path: ["participantId"],
+            equals: participantId,
+          },
+        },
+      ],
+    },
+    orderBy: { createdAt: "desc" },
+    select: { status: true },
+  });
+
+  if (!creditOperation) return true;
+  return (
+    creditOperation.status === "SUCCEEDED" ||
+    creditOperation.status === "PARTIAL"
+  );
+}
+
 export async function syncXeroMembershipCancellationContact(params: {
   memberId: string;
   requestId: string;
@@ -779,6 +824,20 @@ export async function syncXeroMembershipCancellationContact(params: {
 
   const addedGroupIds: string[] = [];
   try {
+    // Do not archive the contact until the cancellation credit note has reached
+    // Xero. Archiving first makes Xero reject the credit note (you cannot raise
+    // a credit note against an archived contact). If the credit note has not
+    // settled, fail this operation so it is retried after the credit note
+    // succeeds rather than archiving prematurely.
+    if (
+      shouldArchive &&
+      !(await isMembershipCancellationCreditNoteSettled(params.participantId))
+    ) {
+      throw new Error(
+        `Deferring Xero contact archive for cancellation participant ${params.participantId}: the membership cancellation credit note has not been pushed to Xero yet. Archiving the contact first would block the credit note.`,
+      );
+    }
+
     for (const groupId of removedGroupIds) {
       await callXeroApi(
         () => xero.accountingApi.deleteContactGroupContact(tenantId, groupId, contactId),

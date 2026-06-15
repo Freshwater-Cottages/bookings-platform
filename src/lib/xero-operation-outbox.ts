@@ -1503,17 +1503,12 @@ export async function queueApprovedMembershipCancellationXeroOperations(params: 
   });
   const queuedResults: Array<{ queueOperationId: string | null; message: string }> = [];
 
-  queuedResults.push(
-    await enqueueXeroMembershipCancellationContactOperation(
-      {
-        memberId: params.memberId,
-        requestId: params.requestId,
-        participantId: params.participantId,
-      },
-      { createdByMemberId: params.createdByMemberId }
-    )
-  );
-
+  // Enqueue the credit note BEFORE the contact cleanup. The outbox processes
+  // operations oldest-first (orderBy createdAt asc), so this ensures the credit
+  // note is pushed to Xero before the contact is archived. Archiving first
+  // would block the credit note, because Xero rejects credit notes raised
+  // against an archived contact. The contact operation also re-checks this at
+  // run time and defers if the credit note has not settled yet.
   if (subscription) {
     queuedResults.push(
       await enqueueXeroMembershipCancellationCreditNoteOperation(
@@ -1531,6 +1526,17 @@ export async function queueApprovedMembershipCancellationXeroOperations(params: 
       message: "No current-season membership subscription record exists for cancellation crediting.",
     });
   }
+
+  queuedResults.push(
+    await enqueueXeroMembershipCancellationContactOperation(
+      {
+        memberId: params.memberId,
+        requestId: params.requestId,
+        participantId: params.participantId,
+      },
+      { createdByMemberId: params.createdByMemberId }
+    )
+  );
 
   if (queuedResults.some((result) => result.queueOperationId)) {
     void kickQueuedXeroOutboxOperationsIfConnected({ limit: queuedResults.length }).catch(
