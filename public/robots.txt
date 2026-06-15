@@ -7,6 +7,20 @@ Disallow: /dashboard
 Disallow: /bookings
 Disallow: /profile
 Disallow: /book
+Disallow: /nominations
+Disallow: /finance
+Disallow: /lodge
+Disallow: /chores
+Disallow: /membership-cancellation
 Disallow: /api/
+
+# Auth flows and token-based links - not useful for indexing
+Disallow: /login
+Disallow: /register
+Disallow: /forgot-password
+Disallow: /reset-password
+Disallow: /change-password
+Disallow: /verify-email
+Disallow: /confirm-email-change
 
 Sitemap: https://example.org/sitemap.xml
