@@ -458,7 +458,7 @@ export function ImageManagerClient() {
                 </p>
                 <p className="text-xs">or click to select files</p>
                 <p className="text-xs text-slate-400">
-                  JPG, PNG, GIF, WebP, AVIF, SVG · max 10 MB per file
+                  JPG, PNG, GIF, WebP, AVIF · max 10 MB per file
                 </p>
               </>
             )}
@@ -466,7 +466,7 @@ export function ImageManagerClient() {
               ref={fileInputRef}
               type="file"
               multiple
-              accept="image/jpeg,image/png,image/gif,image/webp,image/avif,image/svg+xml"
+              accept="image/jpeg,image/png,image/gif,image/webp,image/avif"
               className="hidden"
               onChange={handleFileInputChange}
             />
