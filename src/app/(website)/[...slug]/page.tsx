@@ -71,6 +71,10 @@ function buildEmbeddedBody(contentHtml: string) {
   return parts;
 }
 
+function pageSlugFromPath(path: string) {
+  return path.replace(/^\//, "") || "home";
+}
+
 export async function generateMetadata(
   props: DynamicPageProps,
 ): Promise<Metadata> {
@@ -99,10 +103,14 @@ export default async function DynamicWebsitePage(props: DynamicPageProps) {
 
   const embeddedBody = buildEmbeddedBody(page.contentHtml);
   const headerHtml = { __html: page.headerText };
+  const pageSlug = pageSlugFromPath(page.path);
 
   return (
     <>
-      <section className="dynamic-header bg-gradient-to-br from-brand-charcoal to-brand-deep py-16 text-brand-snow sm:py-20">
+      <section
+        className="dynamic-header bg-gradient-to-br from-brand-charcoal to-brand-deep py-16 text-brand-snow sm:py-20"
+        data-page-slug={pageSlug}
+      >
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <span className="website-eyebrow mb-4">{page.caption}</span>
           <h1 className="font-heading text-4xl font-bold tracking-tight sm:text-5xl">
@@ -115,7 +123,10 @@ export default async function DynamicWebsitePage(props: DynamicPageProps) {
           />
         </div>
       </section>
-      <section className="dynamic-body bg-brand-snow py-16 sm:py-20">
+      <section
+        className="dynamic-body bg-brand-snow py-16 sm:py-20"
+        data-page-slug={pageSlug}
+      >
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           {embeddedBody ? (
             <div className="space-y-10 text-base leading-7 text-brand-deep/85 [&_a]:text-brand-charcoal [&_a]:underline [&_h1]:font-heading [&_h1]:text-3xl [&_h1]:font-bold [&_h2]:font-heading [&_h2]:text-2xl [&_h2]:font-semibold [&_h3]:font-heading [&_h3]:text-xl [&_h3]:font-semibold [&_li]:ml-6 [&_li]:list-disc [&_ol_li]:list-decimal [&_p]:mb-4">
@@ -153,7 +164,10 @@ export default async function DynamicWebsitePage(props: DynamicPageProps) {
               })}
             </div>
           ) : (
-            <div className="dynamic-empty rounded-lg border border-brand-ridge/35 bg-brand-mist/35 p-6 text-brand-deep/75">
+            <div
+              className="dynamic-empty rounded-lg border border-brand-ridge/35 bg-brand-mist/35 p-6 text-brand-deep/75"
+              data-page-slug={pageSlug}
+            >
               No content has been published for this page yet.
             </div>
           )}

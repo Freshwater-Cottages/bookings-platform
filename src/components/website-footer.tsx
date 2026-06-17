@@ -1,10 +1,23 @@
 import Link from "next/link";
 import { WebsiteLogo } from "@/components/website-logo";
-import { CLUB_FACEBOOK_URL, CLUB_NAME, CLUB_PUBLIC_URL } from "@/config/club-identity";
+import {
+  CLUB_FACEBOOK_URL,
+  CLUB_NAME,
+  CLUB_PUBLIC_URL,
+} from "@/config/club-identity";
 
-export function WebsiteFooter({ logoDataUrl }: { logoDataUrl?: string | null }) {
+export function WebsiteFooter({
+  logoDataUrl,
+  pageSlug,
+}: {
+  logoDataUrl?: string | null;
+  pageSlug: string;
+}) {
   return (
-    <footer className="border-t border-brand-gold/15 bg-brand-charcoal text-brand-snow/90">
+    <footer
+      className="border-t border-brand-gold/15 bg-brand-charcoal text-brand-snow/90"
+      data-page-slug={pageSlug}
+    >
       <div className="mx-auto max-w-7xl px-4 py-12 sm:px-6 lg:px-8">
         <div className="grid grid-cols-1 gap-8 md:grid-cols-3">
           {/* Club info */}
@@ -30,32 +43,50 @@ export function WebsiteFooter({ logoDataUrl }: { logoDataUrl?: string | null }) 
             </h3>
             <ul className="space-y-2 text-sm">
               <li>
-                <Link href="/about" className="transition-colors hover:text-brand-gold">
+                <Link
+                  href="/about"
+                  className="transition-colors hover:text-brand-gold"
+                >
                   About the Club
                 </Link>
               </li>
               <li>
-                <Link href="/join" className="transition-colors hover:text-brand-gold">
+                <Link
+                  href="/join"
+                  className="transition-colors hover:text-brand-gold"
+                >
                   Join the Club
                 </Link>
               </li>
               <li>
-                <Link href="/faq" className="transition-colors hover:text-brand-gold">
+                <Link
+                  href="/faq"
+                  className="transition-colors hover:text-brand-gold"
+                >
                   FAQ
                 </Link>
               </li>
               <li>
-                <Link href="/rules" className="transition-colors hover:text-brand-gold">
+                <Link
+                  href="/rules"
+                  className="transition-colors hover:text-brand-gold"
+                >
                   Club Rules
                 </Link>
               </li>
               <li>
-                <Link href="/contact" className="transition-colors hover:text-brand-gold">
+                <Link
+                  href="/contact"
+                  className="transition-colors hover:text-brand-gold"
+                >
                   Contact Us
                 </Link>
               </li>
               <li>
-                <Link href="/login" className="transition-colors hover:text-brand-gold">
+                <Link
+                  href="/login"
+                  className="transition-colors hover:text-brand-gold"
+                >
                   Member Login
                 </Link>
               </li>
@@ -108,11 +139,17 @@ export function WebsiteFooter({ logoDataUrl }: { logoDataUrl?: string | null }) 
             rights reserved.
           </p>
           <p className="mt-2 space-x-4">
-            <Link href="/privacy" className="transition-colors hover:text-brand-gold">
+            <Link
+              href="/privacy"
+              className="transition-colors hover:text-brand-gold"
+            >
               Privacy Policy
             </Link>
             <span aria-hidden="true">&middot;</span>
-            <Link href="/terms" className="transition-colors hover:text-brand-gold">
+            <Link
+              href="/terms"
+              className="transition-colors hover:text-brand-gold"
+            >
               Terms of Service
             </Link>
           </p>

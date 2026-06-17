@@ -16,12 +16,9 @@ import {
 
 export function getFeatureFlagBlockResponse(
   pathname: string,
-  flags: FeatureFlags = featureFlags
+  flags: FeatureFlags = featureFlags,
 ): NextResponse | null {
-  const disabledFeature = getDisabledFeatureForPath(
-    pathname,
-    flags
-  );
+  const disabledFeature = getDisabledFeatureForPath(pathname, flags);
 
   if (!disabledFeature) {
     return null;
@@ -44,8 +41,12 @@ async function getEffectiveModuleBlockResponse(pathname: string) {
 export async function proxy(request: NextRequest) {
   const nonce = createCspNonce();
   const csp = buildContentSecurityPolicy(nonce);
+  const pageSlug =
+    request.nextUrl.pathname === "/"
+      ? "home"
+      : request.nextUrl.pathname.replace(/^\//, "");
   const featureFlagBlockResponse = await getEffectiveModuleBlockResponse(
-    request.nextUrl.pathname
+    request.nextUrl.pathname,
   );
 
   if (featureFlagBlockResponse) {
@@ -58,6 +59,7 @@ export async function proxy(request: NextRequest) {
 
   requestHeaders.set(CSP_NONCE_HEADER, nonce);
   requestHeaders.set(CSP_HEADER, csp);
+  requestHeaders.set("x-page-slug", pageSlug);
 
   const response = NextResponse.next({
     request: {
