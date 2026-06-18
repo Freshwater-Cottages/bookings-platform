@@ -5,6 +5,7 @@ import { logAudit } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 import { getStripe } from "@/lib/stripe";
+import { resolveEmailDeliveryConfig } from "@/lib/email-delivery";
 
 const providerTestSchema = z.object({
   provider: z.enum(["stripe", "smtp", "sentry", "xero", "finance-xero"]),
@@ -17,7 +18,11 @@ async function withTimeout<T>(label: string, promise: Promise<T>): Promise<T> {
   return Promise.race([
     promise,
     new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs / 1000}s`)), timeoutMs),
+      setTimeout(
+        () =>
+          reject(new Error(`${label} timed out after ${timeoutMs / 1000}s`)),
+        timeoutMs,
+      ),
     ),
   ]);
 }
@@ -37,22 +42,19 @@ async function testStripe() {
 }
 
 async function testSmtp() {
-  const host = readEnv("SMTP_HOST");
-  const user = readEnv("AWS_SES_ACCESS_KEY_ID");
-  const pass = readEnv("AWS_SES_SECRET_ACCESS_KEY");
-  if (!host || !user || !pass) {
-    throw new Error("SMTP_HOST, AWS_SES_ACCESS_KEY_ID, and AWS_SES_SECRET_ACCESS_KEY are required");
+  const config = resolveEmailDeliveryConfig();
+  if (!config.ok || !config.transportOptions) {
+    throw new Error(
+      `Email delivery config invalid: ${config.issues.join("; ")}`,
+    );
   }
 
   const nodemailer = await import("nodemailer");
-  const transporter = nodemailer.default.createTransport({
-    host,
-    port: Number(readEnv("SMTP_PORT")) || 587,
-    secure: false,
-    auth: { user, pass },
-  });
+  const transporter = nodemailer.default.createTransport(
+    config.transportOptions,
+  );
   await withTimeout("SMTP verify", transporter.verify());
-  return "SMTP verification completed successfully.";
+  return `${config.modeLabel} verification completed successfully.`;
 }
 
 async function testSentry() {

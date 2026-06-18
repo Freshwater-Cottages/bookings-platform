@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { getRuntimeConfigCheck } from "@/lib/runtime-config";
+import { resolveEmailDeliveryConfig } from "@/lib/email-delivery";
 
 export interface CheckResult {
   status: "ok" | "error";
@@ -50,12 +51,12 @@ const processStartTime = Date.now();
 
 async function withTimeout<T>(
   promise: Promise<T>,
-  timeoutMs: number
+  timeoutMs: number,
 ): Promise<T> {
   return Promise.race([
     promise,
     new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error("Timeout")), timeoutMs)
+      setTimeout(() => reject(new Error("Timeout")), timeoutMs),
     ),
   ]);
 }
@@ -63,10 +64,7 @@ async function withTimeout<T>(
 async function checkDatabase(): Promise<CheckResult> {
   const start = Date.now();
   try {
-    await withTimeout(
-      prisma.$queryRaw`SELECT 1`,
-      CHECK_TIMEOUT_MS
-    );
+    await withTimeout(prisma.$queryRaw`SELECT 1`, CHECK_TIMEOUT_MS);
     return { status: "ok", latencyMs: Date.now() - start };
   } catch (err) {
     return {
@@ -82,9 +80,17 @@ async function checkStripe(): Promise<CheckResult> {
   try {
     const key = process.env.STRIPE_SECRET_KEY;
     if (!key) {
-      return { status: "error", latencyMs: 0, error: "STRIPE_SECRET_KEY not configured" };
+      return {
+        status: "error",
+        latencyMs: 0,
+        error: "STRIPE_SECRET_KEY not configured",
+      };
     }
-    if (!key.startsWith("sk_test_") && !key.startsWith("sk_live_") && !key.startsWith("rk_")) {
+    if (
+      !key.startsWith("sk_test_") &&
+      !key.startsWith("sk_live_") &&
+      !key.startsWith("rk_")
+    ) {
       return { status: "error", latencyMs: 0, error: "Invalid key format" };
     }
     return { status: "ok", latencyMs: Date.now() - start };
@@ -102,13 +108,21 @@ async function checkXero(): Promise<CheckResult> {
   try {
     const token = await withTimeout(
       prisma.xeroToken.findFirst({ orderBy: { updatedAt: "desc" } }),
-      CHECK_TIMEOUT_MS
+      CHECK_TIMEOUT_MS,
     );
     if (!token) {
-      return { status: "error", latencyMs: Date.now() - start, error: "Not connected" };
+      return {
+        status: "error",
+        latencyMs: Date.now() - start,
+        error: "Not connected",
+      };
     }
     if (token.expiresAt < new Date()) {
-      return { status: "error", latencyMs: Date.now() - start, error: "Token expired" };
+      return {
+        status: "error",
+        latencyMs: Date.now() - start,
+        error: "Token expired",
+      };
     }
     return { status: "ok", latencyMs: Date.now() - start };
   } catch (err) {
@@ -123,22 +137,19 @@ async function checkXero(): Promise<CheckResult> {
 async function checkSmtp(): Promise<CheckResult> {
   const start = Date.now();
   try {
-    const host = process.env.SMTP_HOST;
-    const user = process.env.AWS_SES_ACCESS_KEY_ID;
-    if (!host || !user) {
-      return { status: "error", latencyMs: 0, error: "SMTP not configured" };
+    const config = resolveEmailDeliveryConfig();
+    if (!config.ok || !config.transportOptions) {
+      return {
+        status: "error",
+        latencyMs: 0,
+        error: `Email delivery config invalid: ${config.issues.join("; ")}`,
+      };
     }
 
     const nodemailer = await import("nodemailer");
-    const transporter = nodemailer.default.createTransport({
-      host,
-      port: Number(process.env.SMTP_PORT) || 587,
-      secure: false,
-      auth: {
-        user: process.env.AWS_SES_ACCESS_KEY_ID || "",
-        pass: process.env.AWS_SES_SECRET_ACCESS_KEY || "",
-      },
-    });
+    const transporter = nodemailer.default.createTransport(
+      config.transportOptions,
+    );
     await transporter.verify();
     return { status: "ok", latencyMs: Date.now() - start };
   } catch (err) {
