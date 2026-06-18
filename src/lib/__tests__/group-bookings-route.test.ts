@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   closeGroupBooking: vi.fn(),
   reopenGroupBooking: vi.fn(),
   joinGroupBookingAsMember: vi.fn(),
+  createNonMemberJoinRequest: vi.fn(),
 }));
 
 vi.mock("@/lib/auth", () => ({ auth: mocks.auth }));
@@ -23,6 +24,7 @@ vi.mock("@/lib/rate-limit", () => ({
     groupBookingCreate: {},
     groupBookingLookup: {},
     groupBookingJoin: {},
+    groupBookingJoinRequest: {},
   },
 }));
 vi.mock("@/lib/logger", () => ({
@@ -41,12 +43,14 @@ vi.mock("@/lib/group-booking", async () => {
     closeGroupBooking: mocks.closeGroupBooking,
     reopenGroupBooking: mocks.reopenGroupBooking,
     joinGroupBookingAsMember: mocks.joinGroupBookingAsMember,
+    createNonMemberJoinRequest: mocks.createNonMemberJoinRequest,
   };
 });
 
 import { POST } from "@/app/api/group-bookings/route";
 import { GET, PATCH } from "@/app/api/group-bookings/[code]/route";
 import { POST as joinPOST } from "@/app/api/group-bookings/[code]/join/route";
+import { POST as joinRequestPOST } from "@/app/api/group-bookings/[code]/join-request/route";
 import { GroupBookingError } from "@/lib/group-booking";
 
 function postRequest(body: unknown) {
@@ -291,5 +295,61 @@ describe("POST /api/group-bookings/[code]/join", () => {
       params: Promise.resolve({ code: "ABCD2345" }),
     });
     expect(res.status).toBe(409);
+  });
+});
+
+describe("POST /api/group-bookings/[code]/join-request (non-member)", () => {
+  function reqBody(overrides: Record<string, unknown> = {}) {
+    return new NextRequest(
+      "http://localhost/api/group-bookings/ABCD2345/join-request",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          contactFirstName: "Sam",
+          contactLastName: "Guest",
+          contactEmail: "sam@example.com",
+          guests: [
+            { firstName: "Sam", lastName: "Guest", ageTier: "ADULT" },
+          ],
+          ...overrides,
+        }),
+        headers: { "content-type": "application/json" },
+      }
+    );
+  }
+
+  it("rejects a missing email with 422", async () => {
+    const res = await joinRequestPOST(reqBody({ contactEmail: undefined }), {
+      params: Promise.resolve({ code: "ABCD2345" }),
+    });
+    expect(res.status).toBe(422);
+    expect(mocks.createNonMemberJoinRequest).not.toHaveBeenCalled();
+  });
+
+  it("stages the request and returns a neutral success", async () => {
+    mocks.createNonMemberJoinRequest.mockResolvedValueOnce({ id: "join-1" });
+    const res = await joinRequestPOST(reqBody(), {
+      params: Promise.resolve({ code: "ABCD2345" }),
+    });
+    expect(res.status).toBe(201);
+    await expect(res.json()).resolves.toEqual({ success: true });
+    expect(mocks.createNonMemberJoinRequest).toHaveBeenCalledWith(
+      expect.objectContaining({ code: "ABCD2345", contactEmail: "sam@example.com" })
+    );
+  });
+
+  it("redirects an existing member email to the member login path (409)", async () => {
+    mocks.createNonMemberJoinRequest.mockRejectedValueOnce(
+      new GroupBookingError(
+        "This email belongs to a member account. Please log in and join from your account.",
+        409,
+        { code: "USE_MEMBER_LOGIN" }
+      )
+    );
+    const res = await joinRequestPOST(reqBody(), {
+      params: Promise.resolve({ code: "ABCD2345" }),
+    });
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toMatchObject({ code: "USE_MEMBER_LOGIN" });
   });
 });

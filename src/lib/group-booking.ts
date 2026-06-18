@@ -26,12 +26,16 @@
  */
 import { randomInt } from "crypto";
 import {
+  AgeTier,
   BookingStatus,
   GroupBookingPaymentMode,
   GroupBookingStatus,
   Prisma,
 } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { issueActionToken } from "@/lib/action-tokens";
+import { sendGroupBookingJoinVerificationEmail } from "@/lib/email";
+import logger from "@/lib/logger";
 import { createConfirmedBooking } from "@/lib/booking-create";
 import {
   assertLinkedBookingMembersCanBeBooked,
@@ -598,4 +602,151 @@ export async function joinGroupBookingAsMember(
       booking.status === BookingStatus.PAYMENT_PENDING &&
       booking.finalPriceCents > 0,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Non-member self-add (email-verified join request)
+// ---------------------------------------------------------------------------
+
+/** Verification link lifetime, matching the public booking-request flow. */
+export const GROUP_JOIN_VERIFICATION_TTL_MS = 48 * 60 * 60 * 1000;
+
+export interface NonMemberJoinGuest {
+  firstName: string;
+  lastName: string;
+  ageTier: AgeTier;
+}
+
+export interface NonMemberJoinRequestInput {
+  code: string;
+  contactFirstName: string;
+  contactLastName: string;
+  contactEmail: string;
+  contactPhone?: string | null;
+  guests: NonMemberJoinGuest[];
+}
+
+/**
+ * Stage a non-member's join: validate the group, capture contact + guest
+ * snapshot on a GroupBookingJoin row, and email a verification link. No booking
+ * is created yet (mirrors createBookingRequest in booking-request.ts); the child
+ * booking and pay link are created only after the email is verified.
+ *
+ * EACH_PAYS_OWN only for now. If the email belongs to a real login member we ask
+ * them to log in and use the member path instead of creating a duplicate
+ * non-login member.
+ */
+export async function createNonMemberJoinRequest(
+  input: NonMemberJoinRequestInput
+) {
+  const code = normaliseJoinCode(input.code);
+  const group = code
+    ? await prisma.groupBooking.findUnique({
+        where: { joinCode: code },
+        select: {
+          id: true,
+          status: true,
+          joinDeadline: true,
+          paymentMode: true,
+          organiserBooking: {
+            select: { checkIn: true, checkOut: true, status: true, deletedAt: true },
+          },
+        },
+      })
+    : null;
+
+  if (!group) {
+    throw new GroupBookingError("Group booking not found", 404);
+  }
+  if (!isGroupJoinable(group)) {
+    throw new GroupBookingError("This group is not accepting joins", 409);
+  }
+  if (group.paymentMode !== GroupBookingPaymentMode.EACH_PAYS_OWN) {
+    throw new GroupBookingError(
+      "This group is not accepting individual sign-ups",
+      409
+    );
+  }
+  if (
+    group.organiserBooking.deletedAt ||
+    !(ACTIVE_BOOKING_STATUSES as readonly BookingStatus[]).includes(
+      group.organiserBooking.status
+    )
+  ) {
+    throw new GroupBookingError("This group's booking is no longer active", 409);
+  }
+
+  const contactEmail = input.contactEmail.trim().toLowerCase();
+  const contactFirstName = input.contactFirstName.trim();
+  const contactLastName = input.contactLastName.trim();
+  if (!contactFirstName || !contactLastName || !contactEmail) {
+    throw new GroupBookingError("Contact name and email are required", 422);
+  }
+  if (input.guests.length === 0) {
+    throw new GroupBookingError("At least one guest is required", 422);
+  }
+
+  const lodgeCapacity = await getLodgeCapacity();
+  if (input.guests.length > lodgeCapacity) {
+    throw new GroupBookingError(
+      `A booking cannot exceed ${lodgeCapacity} guests`,
+      400
+    );
+  }
+
+  // A real login member should use the authenticated member path so we don't
+  // create a duplicate non-login member for them.
+  const existingMember = await prisma.member.findFirst({
+    where: {
+      email: { equals: contactEmail, mode: "insensitive" },
+      canLogin: true,
+      active: true,
+    },
+    select: { id: true },
+  });
+  if (existingMember) {
+    throw new GroupBookingError(
+      "This email belongs to a member account. Please log in and join from your account.",
+      409,
+      { code: "USE_MEMBER_LOGIN" }
+    );
+  }
+
+  const { token, tokenHash } = issueActionToken();
+  const verificationTokenExpiresAt = new Date(
+    Date.now() + GROUP_JOIN_VERIFICATION_TTL_MS
+  );
+
+  const join = await prisma.groupBookingJoin.create({
+    data: {
+      groupBookingId: group.id,
+      isMember: false,
+      contactFirstName,
+      contactLastName,
+      contactEmail,
+      contactPhone: input.contactPhone?.trim() || null,
+      guestsSnapshot: input.guests as unknown as Prisma.InputJsonValue,
+      verificationTokenHash: tokenHash,
+      verificationTokenExpiresAt,
+    },
+  });
+
+  try {
+    await sendGroupBookingJoinVerificationEmail({
+      email: contactEmail,
+      firstName: contactFirstName,
+      token,
+      checkIn: group.organiserBooking.checkIn,
+      checkOut: group.organiserBooking.checkOut,
+      guestCount: input.guests.length,
+      expiresAt: verificationTokenExpiresAt,
+    });
+  } catch (err) {
+    logger.error(
+      { err, joinId: join.id },
+      "Failed to send group join verification email"
+    );
+  }
+
+  return join;
 }
