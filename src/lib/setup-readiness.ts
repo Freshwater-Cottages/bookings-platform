@@ -8,6 +8,7 @@ import {
   type AdminModuleKey,
   type AdminModuleSettingsSnapshot,
 } from "./admin-modules";
+import { resolveEmailDeliveryConfigFromEnv } from "@/lib/email-delivery";
 
 export const SETUP_STEP_IDS = [
   "club-config",
@@ -26,7 +27,7 @@ export const SETUP_STEP_IDS = [
   "xero-mappings",
 ] as const;
 
-export type SetupStepId = typeof SETUP_STEP_IDS[number];
+export type SetupStepId = (typeof SETUP_STEP_IDS)[number];
 export type SetupStatus = "complete" | "warning" | "blocked" | "not_started";
 export type SetupCategoryId =
   | "foundation"
@@ -128,11 +129,13 @@ const CATEGORY_META: Record<
 > = {
   foundation: {
     title: "Foundation",
-    description: "Club identity, runtime env, administrator account, and feature switches.",
+    description:
+      "Club identity, runtime env, administrator account, and feature switches.",
   },
   booking: {
     title: "Booking Rules",
-    description: "Capacity, age tiers, rates, seasons, cancellation, and hold settings.",
+    description:
+      "Capacity, age tiers, rates, seasons, cancellation, and hold settings.",
   },
   integrations: {
     title: "Operational Integrations",
@@ -218,14 +221,16 @@ function isHttpUrl(value: string | undefined): boolean {
 function isLikelyStripeSecret(value: string | undefined): boolean {
   return Boolean(
     value &&
-      (value.startsWith("sk_test_") ||
-        value.startsWith("sk_live_") ||
-        value.startsWith("rk_")),
+    (value.startsWith("sk_test_") ||
+      value.startsWith("sk_live_") ||
+      value.startsWith("rk_")),
   );
 }
 
 function isLikelyStripePublishable(value: string | undefined): boolean {
-  return Boolean(value && (value.startsWith("pk_test_") || value.startsWith("pk_live_")));
+  return Boolean(
+    value && (value.startsWith("pk_test_") || value.startsWith("pk_live_")),
+  );
 }
 
 function isHexEncryptionKey(value: string | undefined): boolean {
@@ -250,9 +255,11 @@ function toStatusScore(status: SetupStatus): number {
 }
 
 function worstStatus(statuses: SetupStatus[]): SetupStatus {
-  return statuses.reduce<SetupStatus>((worst, status) =>
-    toStatusScore(status) > toStatusScore(worst) ? status : worst
-  , "complete");
+  return statuses.reduce<SetupStatus>(
+    (worst, status) =>
+      toStatusScore(status) > toStatusScore(worst) ? status : worst,
+    "complete",
+  );
 }
 
 function normalizeStepIds(ids: readonly string[] | undefined): SetupStepId[] {
@@ -296,7 +303,8 @@ function readClubConfig(configDir: string): ClubConfigReadResult {
         exists: true,
         config: null,
         issues: result.error.issues.map((issue) => {
-          const fieldPath = issue.path.length > 0 ? issue.path.join(".") : "root";
+          const fieldPath =
+            issue.path.length > 0 ? issue.path.join(".") : "root";
           return `${fieldPath}: ${issue.message}`;
         }),
       };
@@ -369,7 +377,8 @@ function buildClubConfigCheck(
     {
       id: "club-config",
       title: "Club Config",
-      description: "Club identity, contact details, bed capacity, age tiers, and default rates.",
+      description:
+        "Club identity, contact details, bed capacity, age tiers, and default rates.",
       status: club.config ? "complete" : "blocked",
       required: true,
       message: club.config
@@ -382,8 +391,13 @@ function buildClubConfigCheck(
   );
 }
 
-function buildRuntimeEnvCheck(env: Env, progress: SetupProgressState): SetupStepCheck {
-  const missing: string[] = REQUIRED_RUNTIME_ENV.filter((name) => !hasEnv(env, name));
+function buildRuntimeEnvCheck(
+  env: Env,
+  progress: SetupProgressState,
+): SetupStepCheck {
+  const missing: string[] = REQUIRED_RUNTIME_ENV.filter(
+    (name) => !hasEnv(env, name),
+  );
   if (!hasEnv(env, "AUTH_SECRET") && !hasEnv(env, "NEXTAUTH_SECRET")) {
     missing.push("AUTH_SECRET or NEXTAUTH_SECRET");
   }
@@ -400,7 +414,8 @@ function buildRuntimeEnvCheck(env: Env, progress: SetupProgressState): SetupStep
     {
       id: "runtime-env",
       title: "Runtime Environment",
-      description: "Database, auth, app origin, cron, and seed-admin environment contract.",
+      description:
+        "Database, auth, app origin, cron, and seed-admin environment contract.",
       status: issues.length === 0 ? "complete" : "blocked",
       required: true,
       message:
@@ -429,11 +444,14 @@ function buildSeedAdminCheck(
       {
         id: "seed-admin",
         title: "First Admin",
-        description: "Seeded administrator account used to access setup and admin tools.",
+        description:
+          "Seeded administrator account used to access setup and admin tools.",
         status: "warning",
         required: true,
         message: "Database state was not checked.",
-        details: ["Run setup:check again inside an environment with database access, or review /admin/setup after login."],
+        details: [
+          "Run setup:check again inside an environment with database access, or review /admin/setup after login.",
+        ],
         href: "/admin/members",
       },
       progress,
@@ -445,7 +463,8 @@ function buildSeedAdminCheck(
     {
       id: "seed-admin",
       title: "First Admin",
-      description: "Seeded administrator account used to access setup and admin tools.",
+      description:
+        "Seeded administrator account used to access setup and admin tools.",
       status: adminCount > 0 ? "complete" : "blocked",
       required: true,
       message:
@@ -513,7 +532,11 @@ function buildFeatureFlagCheck(
   const envDetails = MODULE_CONTROLS.map((module) => {
     const layer = buildModuleLayerState(env, db, module.key);
     return `${module.label} env capability (${module.envVar}): ${
-      layer.envEnabled ? "enabled" : hasEnv(env, module.envVar) ? "disabled" : "unset"
+      layer.envEnabled
+        ? "enabled"
+        : hasEnv(env, module.envVar)
+          ? "disabled"
+          : "unset"
     }`;
   });
   const adminDetails = MODULE_CONTROLS.map((module) => {
@@ -533,18 +556,15 @@ function buildFeatureFlagCheck(
     {
       id: "feature-flags",
       title: "Module Controls",
-      description: "Deploy env capability plus Admin Modules club activation for optional modules.",
+      description:
+        "Deploy env capability plus Admin Modules club activation for optional modules.",
       status: envConfigured && adminChecked ? "complete" : "warning",
       required: false,
       message:
         envConfigured && adminChecked
           ? "Module env capabilities and Admin Modules activation were checked."
           : "Module controls are layered; set env capability flags and review Admin Modules activation.",
-      details: [
-        ...envDetails,
-        ...adminDetails,
-        ...effectiveDetails,
-      ],
+      details: [...envDetails, ...adminDetails, ...effectiveDetails],
     },
     progress,
   );
@@ -559,11 +579,14 @@ function buildBookingPolicyCheck(
       {
         id: "booking-policies",
         title: "Booking Policies",
-        description: "Non-member hold, cancellation rules, minimum stays, and group discount.",
+        description:
+          "Non-member hold, cancellation rules, minimum stays, and group discount.",
         status: "warning",
         required: true,
         message: "Database booking policies were not checked.",
-        details: ["Review this in /admin/setup after migrations and seed data have run."],
+        details: [
+          "Review this in /admin/setup after migrations and seed data have run.",
+        ],
         href: "/admin/booking-policies",
       },
       progress,
@@ -577,7 +600,8 @@ function buildBookingPolicyCheck(
     {
       id: "booking-policies",
       title: "Booking Policies",
-      description: "Non-member hold, cancellation rules, minimum stays, and group discount.",
+      description:
+        "Non-member hold, cancellation rules, minimum stays, and group discount.",
       status: complete ? "complete" : "warning",
       required: true,
       message: complete
@@ -603,7 +627,8 @@ function buildMembershipCancellationCheck(
       {
         id: "membership-cancellation",
         title: "Membership Cancellation",
-        description: "Warning text, rejoin process text, and Xero cancellation handling.",
+        description:
+          "Warning text, rejoin process text, and Xero cancellation handling.",
         status: "warning",
         required: false,
         message: "Membership cancellation settings were not checked.",
@@ -618,8 +643,11 @@ function buildMembershipCancellationCheck(
     {
       id: "membership-cancellation",
       title: "Membership Cancellation",
-      description: "Warning text, rejoin process text, and Xero cancellation handling.",
-      status: db.membershipCancellationSettingsConfigured ? "complete" : "warning",
+      description:
+        "Warning text, rejoin process text, and Xero cancellation handling.",
+      status: db.membershipCancellationSettingsConfigured
+        ? "complete"
+        : "warning",
       required: false,
       message: db.membershipCancellationSettingsConfigured
         ? "Membership cancellation settings have been saved."
@@ -646,11 +674,14 @@ function buildAgeTierCheck(
       {
         id: "age-tiers",
         title: "Age And Membership Rules",
-        description: "Age boundaries and whether each age tier needs a subscription to book.",
+        description:
+          "Age boundaries and whether each age tier needs a subscription to book.",
         status: "warning",
         required: true,
         message: "Database age-tier settings were not checked.",
-        details: ["The CLI validated config age tiers; seeded database settings are checked in /admin/setup."],
+        details: [
+          "The CLI validated config age tiers; seeded database settings are checked in /admin/setup.",
+        ],
         href: "/admin/age-tier-settings",
       },
       progress,
@@ -664,7 +695,8 @@ function buildAgeTierCheck(
     {
       id: "age-tiers",
       title: "Age And Membership Rules",
-      description: "Age boundaries and whether each age tier needs a subscription to book.",
+      description:
+        "Age boundaries and whether each age tier needs a subscription to book.",
       status: complete ? "complete" : "warning",
       required: true,
       message: complete
@@ -689,11 +721,14 @@ function buildSeasonRateCheck(
       {
         id: "seasons-rates",
         title: "Seasons And Rates",
-        description: "Season windows and member/non-member nightly rates in integer cents.",
+        description:
+          "Season windows and member/non-member nightly rates in integer cents.",
         status: "warning",
         required: true,
         message: "Database seasons and rates were not checked.",
-        details: ["Run seed data or configure seasons from /admin/seasons after login."],
+        details: [
+          "Run seed data or configure seasons from /admin/seasons after login.",
+        ],
         href: "/admin/seasons",
       },
       progress,
@@ -705,7 +740,8 @@ function buildSeasonRateCheck(
     {
       id: "seasons-rates",
       title: "Seasons And Rates",
-      description: "Season windows and member/non-member nightly rates in integer cents.",
+      description:
+        "Season windows and member/non-member nightly rates in integer cents.",
       status: seasonCount > 0 ? "complete" : "blocked",
       required: true,
       message:
@@ -719,12 +755,17 @@ function buildSeasonRateCheck(
   );
 }
 
-function buildStripeCheck(env: Env, progress: SetupProgressState): SetupStepCheck {
+function buildStripeCheck(
+  env: Env,
+  progress: SetupProgressState,
+): SetupStepCheck {
   const issues = [
     !isLikelyStripeSecret(readEnv(env, "STRIPE_SECRET_KEY"))
       ? "STRIPE_SECRET_KEY is missing or has an unexpected prefix"
       : null,
-    !isLikelyStripePublishable(readEnv(env, "NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY"))
+    !isLikelyStripePublishable(
+      readEnv(env, "NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY"),
+    )
       ? "NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY is missing or has an unexpected prefix"
       : null,
     !hasEnv(env, "STRIPE_WEBHOOK_SECRET")
@@ -736,14 +777,18 @@ function buildStripeCheck(env: Env, progress: SetupProgressState): SetupStepChec
     {
       id: "stripe",
       title: "Stripe",
-      description: "Card payments, saved payment methods, refunds, and webhooks.",
+      description:
+        "Card payments, saved payment methods, refunds, and webhooks.",
       status: issues.length === 0 ? "complete" : "blocked",
       required: true,
       message:
         issues.length === 0
           ? "Stripe environment variables are present."
           : "Stripe environment variables need attention.",
-      details: issues.length === 0 ? ["Secrets are set; values are not displayed."] : issues,
+      details:
+        issues.length === 0
+          ? ["Secrets are set; values are not displayed."]
+          : issues,
       href: "/admin/payments",
       action: {
         type: "provider-test",
@@ -755,34 +800,42 @@ function buildStripeCheck(env: Env, progress: SetupProgressState): SetupStepChec
   );
 }
 
-function buildEmailCheck(env: Env, progress: SetupProgressState): SetupStepCheck {
-  const issues = [
-    !hasEnv(env, "SMTP_HOST") ? "SMTP_HOST is missing" : null,
-    !hasEnv(env, "SMTP_PORT") ? "SMTP_PORT is missing" : null,
-    !hasEnv(env, "AWS_SES_ACCESS_KEY_ID")
-      ? "AWS_SES_ACCESS_KEY_ID is missing"
-      : null,
-    !hasEnv(env, "AWS_SES_SECRET_ACCESS_KEY")
-      ? "AWS_SES_SECRET_ACCESS_KEY is missing"
-      : null,
-    !hasEnv(env, "EMAIL_FROM") ? "EMAIL_FROM is missing" : null,
-    !hasEnv(env, "SES_SNS_TOPIC_ARN")
-      ? "SES_SNS_TOPIC_ARN is missing for deployed SES feedback"
-      : null,
-  ].filter((issue): issue is string => Boolean(issue));
+function buildEmailCheck(
+  env: Env,
+  progress: SetupProgressState,
+): SetupStepCheck {
+  const emailDelivery = resolveEmailDeliveryConfigFromEnv(env);
+  const issues = [...emailDelivery.issues];
+  const details = [
+    `Selected delivery mode: ${emailDelivery.modeLabel}`,
+    ...emailDelivery.warnings.map((warning) => `Warning: ${warning}`),
+  ];
+
+  if (!hasEnv(env, "EMAIL_FROM")) {
+    issues.push("EMAIL_FROM is missing");
+  }
+
+  if (emailDelivery.mode === "aws-ses" && !hasEnv(env, "SES_SNS_TOPIC_ARN")) {
+    issues.push("SES_SNS_TOPIC_ARN is missing for deployed SES feedback");
+  }
+
+  if (issues.length === 0) {
+    details.push("Secrets are set; values are not displayed.");
+  }
 
   return applyProgress(
     {
       id: "email-ses",
-      title: "Email And SES",
-      description: "SMTP sending plus SES SNS bounce and complaint feedback.",
+      title: "Email Delivery",
+      description:
+        "Email sending via AWS SES or SMTP relay, plus optional SES SNS feedback.",
       status: issues.length === 0 ? "complete" : "blocked",
       required: true,
       message:
         issues.length === 0
-          ? "Email and SES environment variables are present."
-          : "Email and SES variables need attention.",
-      details: issues.length === 0 ? ["Secrets are set; values are not displayed."] : issues,
+          ? `Email delivery is configured (${emailDelivery.modeLabel}).`
+          : `Email delivery setup needs attention (${emailDelivery.modeLabel}).`,
+      details: issues.length === 0 ? details : [...details, ...issues],
       href: "/admin/health",
       action: {
         type: "provider-test",
@@ -794,15 +847,23 @@ function buildEmailCheck(env: Env, progress: SetupProgressState): SetupStepCheck
   );
 }
 
-function buildSentryCheck(env: Env, progress: SetupProgressState): SetupStepCheck {
-  const missing = ["SENTRY_DSN", "NEXT_PUBLIC_SENTRY_DSN", "SENTRY_ORG", "SENTRY_PROJECT"]
-    .filter((name) => !hasEnv(env, name));
+function buildSentryCheck(
+  env: Env,
+  progress: SetupProgressState,
+): SetupStepCheck {
+  const missing = [
+    "SENTRY_DSN",
+    "NEXT_PUBLIC_SENTRY_DSN",
+    "SENTRY_ORG",
+    "SENTRY_PROJECT",
+  ].filter((name) => !hasEnv(env, name));
 
   return applyProgress(
     {
       id: "sentry",
       title: "Sentry",
-      description: "Server, edge, browser error reporting, and source-map configuration.",
+      description:
+        "Server, edge, browser error reporting, and source-map configuration.",
       status: missing.length === 0 ? "complete" : "warning",
       required: false,
       message:
@@ -848,7 +909,8 @@ function buildOperationalXeroCheck(
     {
       id: "xero-operational",
       title: "Operational Xero",
-      description: "Member/contact sync, invoices, payments, credit notes, and Xero webhooks.",
+      description:
+        "Member/contact sync, invoices, payments, credit notes, and Xero webhooks.",
       status: !enabled
         ? "warning"
         : issues.length > 0
@@ -856,18 +918,18 @@ function buildOperationalXeroCheck(
           : !db
             ? "warning"
             : connected
-            ? "complete"
-            : "not_started",
+              ? "complete"
+              : "not_started",
       required: enabled,
       message: !enabled
-          ? "Operational Xero is inactive by env capability or Admin Modules activation."
+        ? "Operational Xero is inactive by env capability or Admin Modules activation."
         : !db
           ? "Operational Xero env is ready; connection state was not checked."
-        : connected
-          ? "Operational Xero is connected."
-          : issues.length > 0
-            ? "Operational Xero env needs attention."
-            : "Operational Xero env is ready; connect the tenant from admin.",
+          : connected
+            ? "Operational Xero is connected."
+            : issues.length > 0
+              ? "Operational Xero env needs attention."
+              : "Operational Xero env is ready; connect the tenant from admin.",
       details: [
         `Env capability (${moduleState.envVar}): ${
           moduleState.envEnabled ? "enabled" : "disabled"
@@ -878,8 +940,8 @@ function buildOperationalXeroCheck(
         !db
           ? "Database connection state not checked."
           : connected
-          ? `Token expires: ${db?.operationalXeroTokenExpiresAt ?? "unknown"}`
-          : "No active operational Xero token found.",
+            ? `Token expires: ${db?.operationalXeroTokenExpiresAt ?? "unknown"}`
+            : "No active operational Xero token found.",
       ],
       href: "/admin/xero",
       action: {
@@ -919,7 +981,8 @@ function buildFinanceXeroCheck(
     {
       id: "xero-finance",
       title: "Finance Xero",
-      description: "Separate finance-reporting Xero OAuth boundary and token storage.",
+      description:
+        "Separate finance-reporting Xero OAuth boundary and token storage.",
       status: !enabled
         ? "warning"
         : issues.length > 0
@@ -927,18 +990,18 @@ function buildFinanceXeroCheck(
           : !db
             ? "warning"
             : connected
-            ? "complete"
-            : "not_started",
+              ? "complete"
+              : "not_started",
       required: enabled,
       message: !enabled
-          ? "Finance dashboard is inactive by env capability or Admin Modules activation."
+        ? "Finance dashboard is inactive by env capability or Admin Modules activation."
         : !db
           ? "Finance Xero env is ready; connection state was not checked."
-        : connected
-          ? "Finance Xero is connected."
-          : issues.length > 0
-            ? "Finance Xero env needs attention."
-            : "Finance Xero env is ready; connect from the finance dashboard.",
+          : connected
+            ? "Finance Xero is connected."
+            : issues.length > 0
+              ? "Finance Xero env needs attention."
+              : "Finance Xero env is ready; connect from the finance dashboard.",
       details: [
         `Env capability (${moduleState.envVar}): ${
           moduleState.envEnabled ? "enabled" : "disabled"
@@ -949,8 +1012,8 @@ function buildFinanceXeroCheck(
         !db
           ? "Database connection state not checked."
           : connected
-          ? `Token expires: ${db?.financeXeroTokenExpiresAt ?? "unknown"}`
-          : "No active finance Xero token found.",
+            ? `Token expires: ${db?.financeXeroTokenExpiresAt ?? "unknown"}`
+            : "No active finance Xero token found.",
       ],
       href: "/finance",
       action: {
@@ -972,7 +1035,8 @@ function buildXeroMappingCheck(
       {
         id: "xero-mappings",
         title: "Xero Mappings",
-        description: "Chart of accounts, hut fee item codes, and entrance-fee categories.",
+        description:
+          "Chart of accounts, hut fee item codes, and entrance-fee categories.",
         status: "warning",
         required: false,
         message: "Xero mapping database state was not checked.",
@@ -986,13 +1050,15 @@ function buildXeroMappingCheck(
   const accountMappings = db?.xeroAccountMappingCount ?? 0;
   const hutFeeMappings = db?.xeroHutFeeItemMappingCount ?? 0;
   const entranceFeeMappings = db?.xeroEntranceFeeMappingCount ?? 0;
-  const complete = accountMappings > 0 && hutFeeMappings > 0 && entranceFeeMappings > 0;
+  const complete =
+    accountMappings > 0 && hutFeeMappings > 0 && entranceFeeMappings > 0;
 
   return applyProgress(
     {
       id: "xero-mappings",
       title: "Xero Mappings",
-      description: "Chart of accounts, hut fee item codes, and entrance-fee categories.",
+      description:
+        "Chart of accounts, hut fee item codes, and entrance-fee categories.",
       status: complete ? "complete" : "warning",
       required: false,
       message: complete
@@ -1009,13 +1075,15 @@ function buildXeroMappingCheck(
   );
 }
 
-export function buildSetupReadiness(input: {
-  env?: Env;
-  configDir?: string;
-  database?: SetupDatabaseSnapshot;
-  progress?: Partial<SetupProgressState> | null;
-  now?: Date;
-} = {}): SetupReadiness {
+export function buildSetupReadiness(
+  input: {
+    env?: Env;
+    configDir?: string;
+    database?: SetupDatabaseSnapshot;
+    progress?: Partial<SetupProgressState> | null;
+    now?: Date;
+  } = {},
+): SetupReadiness {
   const env = input.env ?? process.env;
   const configDir = input.configDir ?? path.join(process.cwd(), "config");
   const progress = normalizeSetupProgress(input.progress);
@@ -1056,13 +1124,19 @@ export function buildSetupReadiness(input: {
     };
   });
   const allChecks = categories.flatMap((category) => category.checks);
-  const skipped = allChecks.filter((check) => check.progress === "skipped").length;
+  const skipped = allChecks.filter(
+    (check) => check.progress === "skipped",
+  ).length;
   const complete = allChecks.filter(
     (check) => check.status === "complete" || check.progress === "completed",
   ).length;
   const unresolved = allChecks.filter((check) => !isResolvedByProgress(check));
-  const warning = unresolved.filter((check) => check.status === "warning").length;
-  const blocked = unresolved.filter((check) => check.status === "blocked").length;
+  const warning = unresolved.filter(
+    (check) => check.status === "warning",
+  ).length;
+  const blocked = unresolved.filter(
+    (check) => check.status === "blocked",
+  ).length;
 
   return {
     status: worstStatus(unresolved.map((check) => check.status)),
@@ -1090,7 +1164,9 @@ export function renderSetupCheckReport(readiness: SetupReadiness): string {
     for (const check of category.checks) {
       const progressLabel =
         check.progress === "open" ? "" : `, ${check.progress}`;
-      lines.push(`- ${check.title}: ${check.status}${progressLabel} - ${check.message}`);
+      lines.push(
+        `- ${check.title}: ${check.status}${progressLabel} - ${check.message}`,
+      );
       for (const detail of check.details) {
         lines.push(`  ${detail}`);
       }
@@ -1109,10 +1185,16 @@ export function getSetupRequiredEnvNames(): string[] {
     "STRIPE_SECRET_KEY",
     "NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY",
     "STRIPE_WEBHOOK_SECRET",
+    "USE_AWS_SES",
+    "USE_SMTP_RELAY",
     "SMTP_HOST",
     "SMTP_PORT",
     "AWS_SES_ACCESS_KEY_ID",
     "AWS_SES_SECRET_ACCESS_KEY",
+    "EMAIL_SERVER_HOST",
+    "EMAIL_SERVER_PORT",
+    "EMAIL_SERVER_USER",
+    "EMAIL_SERVER_PASSWORD",
     "SES_SNS_TOPIC_ARN",
     "EMAIL_FROM",
     "SENTRY_DSN",

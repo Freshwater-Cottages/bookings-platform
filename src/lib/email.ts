@@ -111,6 +111,7 @@ import {
   recordSesEmailFeedback,
   type SesEmailFeedbackEvent,
 } from "@/lib/email-suppression";
+import { resolveEmailDeliveryConfig } from "@/lib/email-delivery";
 
 type EmailAttachment = {
   filename: string;
@@ -118,15 +119,25 @@ type EmailAttachment = {
   contentType?: string;
 };
 
-const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST || "email-smtp.ap-southeast-2.amazonaws.com",
-  port: Number(process.env.SMTP_PORT) || 587,
-  secure: false,
-  auth: {
-    user: process.env.AWS_SES_ACCESS_KEY_ID || "",
-    pass: process.env.AWS_SES_SECRET_ACCESS_KEY || "",
-  },
-});
+let cachedTransporter: nodemailer.Transporter | null = null;
+let cachedTransportSignature: string | null = null;
+
+function getEmailTransporter() {
+  const config = resolveEmailDeliveryConfig();
+  if (!config.ok || !config.transportOptions) {
+    throw new Error(
+      `Email delivery is not configured: ${config.issues.join("; ")}`,
+    );
+  }
+
+  const signature = `${config.mode}:${config.transportOptions.host}:${config.transportOptions.port}:${config.transportOptions.auth.user}`;
+  if (!cachedTransporter || cachedTransportSignature !== signature) {
+    cachedTransporter = nodemailer.createTransport(config.transportOptions);
+    cachedTransportSignature = signature;
+  }
+
+  return { transporter: cachedTransporter, modeLabel: config.modeLabel };
+}
 
 // Token-bearing emails should never persist their rendered HTML in logs or retry
 // tables because that would retain live reset/verification links at rest.
@@ -197,7 +208,10 @@ export async function sendEmail({
     html,
     templateData,
   });
-  const from = formatEmailFromAddressWithSettings(prepared.settings, EMAIL_FROM);
+  const from = formatEmailFromAddressWithSettings(
+    prepared.settings,
+    EMAIL_FROM,
+  );
   const persistHtmlBody = shouldPersistEmailHtml(templateName);
   const plainTextBody = text || htmlToPlainText(prepared.html);
   const normalizedRecipient = normalizeEmailAddress(to);
@@ -225,15 +239,15 @@ export async function sendEmail({
     logger.error({ err }, "Failed to create EmailLog record");
   }
 
-  const activeSuppression = await getActiveEmailSuppression(normalizedRecipient).catch(
-    (err) => {
-      logger.error(
-        { err, to: normalizedRecipient, templateName },
-        "Failed to check email suppression state"
-      );
-      return null;
-    }
-  );
+  const activeSuppression = await getActiveEmailSuppression(
+    normalizedRecipient,
+  ).catch((err) => {
+    logger.error(
+      { err, to: normalizedRecipient, templateName },
+      "Failed to check email suppression state",
+    );
+    return null;
+  });
 
   if (activeSuppression) {
     if (emailLogId) {
@@ -247,7 +261,10 @@ export async function sendEmail({
           },
         });
       } catch (err) {
-        logger.error({ err, to: normalizedRecipient }, "Failed to update suppressed email log");
+        logger.error(
+          { err, to: normalizedRecipient },
+          "Failed to update suppressed email log",
+        );
       }
     }
 
@@ -258,17 +275,23 @@ export async function sendEmail({
         emailSuppressionId: activeSuppression.id,
         reason: activeSuppression.reason,
       },
-      "Skipped email to suppressed recipient"
+      "Skipped email to suppressed recipient",
     );
     return;
   }
 
   if (process.env.NODE_ENV === "development") {
-    logger.info({ to, subject: sanitizedSubject, templateName }, "Email sent (dev mode)");
+    logger.info(
+      { to, subject: sanitizedSubject, templateName },
+      "Email sent (dev mode)",
+    );
     if (persistHtmlBody) {
       logger.debug({ html: prepared.html }, "Email HTML content");
     } else {
-      logger.debug({ templateName }, "Email HTML content redacted for sensitive template");
+      logger.debug(
+        { templateName },
+        "Email HTML content redacted for sensitive template",
+      );
     }
     // Mark as SENT in dev mode
     if (emailLogId) {
@@ -285,6 +308,7 @@ export async function sendEmail({
   }
 
   try {
+    const { transporter, modeLabel } = getEmailTransporter();
     const result = await transporter.sendMail({
       from,
       to,
@@ -293,6 +317,8 @@ export async function sendEmail({
       text: plainTextBody,
       attachments,
     });
+
+    logger.debug({ templateName, to, mode: modeLabel }, "Email delivered");
 
     // Update EmailLog to SENT
     if (emailLogId) {
@@ -327,7 +353,7 @@ export async function sendEmail({
     if (!persistHtmlBody) {
       logger.warn(
         { templateName },
-        "Sensitive email delivery failed and cannot be automatically retried because HTML retention is disabled"
+        "Sensitive email delivery failed and cannot be automatically retried because HTML retention is disabled",
       );
     }
     throw err;
@@ -344,7 +370,7 @@ export async function getAdminEmails(): Promise<string[]> {
 }
 
 async function getAdminAlertEmails(
-  preferenceKey: AdminNotificationPreferenceKey
+  preferenceKey: AdminNotificationPreferenceKey,
 ): Promise<string[]> {
   const admins = await prisma.member.findMany({
     where: { role: "ADMIN", active: true },
@@ -361,7 +387,7 @@ async function getAdminAlertEmails(
       (admin) =>
         resolveAdminNotificationPreferences(admin.notificationPreference)[
           preferenceKey
-        ]
+        ],
     )
     .map((admin) => admin.email);
 }
@@ -386,7 +412,7 @@ async function sendToAdmins({
   if (!delivery.send) {
     logger.info(
       { templateName, deliveryMode: delivery.mode, reason: delivery.reason },
-      "Skipped admin email by delivery policy"
+      "Skipped admin email by delivery policy",
     );
     return;
   }
@@ -402,7 +428,10 @@ async function sendToAdmins({
         templateData,
         attachments,
       }).catch((err) =>
-        logger.error({ err, to: email, templateName }, "Failed to send admin alert")
+        logger.error(
+          { err, to: email, templateName },
+          "Failed to send admin alert",
+        ),
       ),
     ),
   );
@@ -413,17 +442,14 @@ async function shouldSendDirectAdminSystemEmail(templateName: string) {
   if (!delivery.send) {
     logger.info(
       { templateName, deliveryMode: delivery.mode, reason: delivery.reason },
-      "Skipped direct admin email by delivery policy"
+      "Skipped direct admin email by delivery policy",
     );
     return false;
   }
   return true;
 }
 
-export async function sendPasswordResetEmail(
-  email: string,
-  token: string
-) {
+export async function sendPasswordResetEmail(email: string, token: string) {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
   const resetUrl = `${baseUrl}/reset-password?token=${token}`;
 
@@ -439,7 +465,7 @@ export async function sendPasswordResetEmail(
 export async function sendAdminPasswordResetEmail(
   email: string,
   token: string,
-  expiryLabel = "1 hour"
+  expiryLabel = "1 hour",
 ) {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
   const resetUrl = `${baseUrl}/reset-password?token=${token}`;
@@ -456,7 +482,7 @@ export async function sendAdminPasswordResetEmail(
 export async function sendMemberSetupInviteEmail(
   email: string,
   firstName: string,
-  token: string
+  token: string,
 ) {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
   const resetUrl = `${baseUrl}/reset-password?token=${token}`;
@@ -482,7 +508,11 @@ export async function sendBookingConfirmedEmail(
   checkOut: Date,
   guestCount: number,
   totalCents: number,
-  options?: { discountCents?: number; promoAdjustmentCents?: number; promoCode?: string }
+  options?: {
+    discountCents?: number;
+    promoAdjustmentCents?: number;
+    promoCode?: string;
+  },
 ) {
   const settings = await loadEmailMessageSettings();
   const promoAdjustmentCents =
@@ -494,27 +524,37 @@ export async function sendBookingConfirmedEmail(
   await sendEmail({
     to: email,
     subject: `Booking Confirmed - ${CLUB_LODGE_NAME}`,
-    html: bookingConfirmedTemplate(firstName, checkIn, checkOut, guestCount, totalCents, {
-      ...options,
-      lodgeTravelNote: settings.lodgeTravelNote,
-      doorCode: settings.doorCode,
-    }),
+    html: bookingConfirmedTemplate(
+      firstName,
+      checkIn,
+      checkOut,
+      guestCount,
+      totalCents,
+      {
+        ...options,
+        lodgeTravelNote: settings.lodgeTravelNote,
+        doorCode: settings.doorCode,
+      },
+    ),
     templateName: "booking-confirmed",
     templateData: {
       firstName,
       checkIn: formatNZDate(checkIn),
       checkOut: formatNZDate(checkOut),
       guestCount,
-      subtotal: promoAdjustmentCents !== 0
-        ? formatMoneyCents(totalCents - promoAdjustmentCents)
-        : "",
+      subtotal:
+        promoAdjustmentCents !== 0
+          ? formatMoneyCents(totalCents - promoAdjustmentCents)
+          : "",
       promoCode: options?.promoCode ?? "",
-      discount: promoAdjustmentCents < 0
-        ? formatMoneyCents(Math.abs(promoAdjustmentCents))
-        : "",
-      promoAdjustment: promoAdjustmentCents !== 0
-        ? `${promoAdjustmentPrefix}${formatMoneyCents(Math.abs(promoAdjustmentCents))}`
-        : "",
+      discount:
+        promoAdjustmentCents < 0
+          ? formatMoneyCents(Math.abs(promoAdjustmentCents))
+          : "",
+      promoAdjustment:
+        promoAdjustmentCents !== 0
+          ? `${promoAdjustmentPrefix}${formatMoneyCents(Math.abs(promoAdjustmentCents))}`
+          : "",
       totalPaid: formatMoneyCents(totalCents),
       total: formatMoneyCents(totalCents),
       doorCode: settings.doorCode ?? "",
@@ -528,12 +568,18 @@ export async function sendBookingPendingEmail(
   checkIn: Date,
   checkOut: Date,
   guestCount: number,
-  holdUntil: Date
+  holdUntil: Date,
 ) {
   await sendEmail({
     to: email,
     subject: `Booking Pending - ${CLUB_LODGE_NAME}`,
-    html: bookingPendingTemplate(firstName, checkIn, checkOut, guestCount, holdUntil),
+    html: bookingPendingTemplate(
+      firstName,
+      checkIn,
+      checkOut,
+      guestCount,
+      holdUntil,
+    ),
     templateName: "booking-pending",
     templateData: {
       firstName,
@@ -550,7 +596,7 @@ export async function sendBookingBumpedEmail(
   firstName: string,
   checkIn: Date,
   checkOut: Date,
-  guestCount: number
+  guestCount: number,
 ) {
   await sendEmail({
     to: email,
@@ -572,7 +618,7 @@ export async function sendBookingGuestsRemovedEmail(
   checkIn: Date,
   checkOut: Date,
   guestCount: number,
-  newTotalCents: number
+  newTotalCents: number,
 ) {
   await sendEmail({
     to: email,
@@ -582,7 +628,7 @@ export async function sendBookingGuestsRemovedEmail(
       checkIn,
       checkOut,
       guestCount,
-      newTotalCents
+      newTotalCents,
     ),
     templateName: "booking-guests-removed",
     templateData: {
@@ -599,7 +645,7 @@ export async function sendBookingGuestsCancelledEmail(
   email: string,
   firstName: string,
   checkIn: Date,
-  checkOut: Date
+  checkOut: Date,
 ) {
   await sendEmail({
     to: email,
@@ -620,12 +666,18 @@ export async function sendBookingCancelledEmail(
   checkIn: Date,
   checkOut: Date,
   refundCents: number,
-  refundMethod: "card" | "credit" = "card"
+  refundMethod: "card" | "credit" = "card",
 ) {
   await sendEmail({
     to: email,
     subject: `Booking Cancelled - ${CLUB_LODGE_NAME}`,
-    html: bookingCancelledTemplate(firstName, checkIn, checkOut, refundCents, refundMethod),
+    html: bookingCancelledTemplate(
+      firstName,
+      checkIn,
+      checkOut,
+      refundCents,
+      refundMethod,
+    ),
     templateName: "booking-cancelled",
     templateData: {
       firstName,
@@ -702,14 +754,17 @@ export async function sendChoreRosterEmail(
   guestName: string,
   date: string,
   chores: Array<{ name: string; description: string | null }>,
-  choreLink?: string
+  choreLink?: string,
 ) {
-  const formattedDate = new Date(date + "T00:00:00").toLocaleDateString("en-NZ", {
-    weekday: "long",
-    year: "numeric",
-    month: "long",
-    day: "numeric",
-  });
+  const formattedDate = new Date(date + "T00:00:00").toLocaleDateString(
+    "en-NZ",
+    {
+      weekday: "long",
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    },
+  );
 
   await sendEmail({
     to: email,
@@ -760,7 +815,11 @@ export async function sendWelcomeEmail(email: string, firstName: string) {
   });
 }
 
-export async function sendVerificationEmail(email: string, firstName: string, token: string) {
+export async function sendVerificationEmail(
+  email: string,
+  firstName: string,
+  token: string,
+) {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
   const verifyUrl = `${baseUrl}/verify-email?token=${token}`;
   const expiresAt = new Date(Date.now() + EMAIL_VERIFICATION_TTL_MS);
@@ -855,7 +914,7 @@ export async function sendMembershipApplicationApprovedEmail(params: {
     html: membershipApplicationApprovedTemplate(
       params.firstName,
       resetUrl,
-      params.adminNotes
+      params.adminNotes,
     ),
     templateName: "membership-application-approved",
     templateData: {
@@ -877,7 +936,7 @@ export async function sendMembershipApplicationRejectedEmail(params: {
     subject: `Update on your ${CLUB_NAME} membership application`,
     html: membershipApplicationRejectedTemplate(
       params.firstName,
-      params.adminNotes
+      params.adminNotes,
     ),
     templateName: "membership-application-rejected",
     templateData: {
@@ -916,7 +975,10 @@ export async function sendAdminMembershipApplicationPendingEmail(data: {
   });
 }
 
-export async function sendEmailChangeVerification(newEmail: string, token: string) {
+export async function sendEmailChangeVerification(
+  newEmail: string,
+  token: string,
+) {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
   const verifyUrl = `${baseUrl}/confirm-email-change?token=${token}`;
   const expiresAt = new Date(Date.now() + EMAIL_CHANGE_TTL_MS);
@@ -973,19 +1035,19 @@ function parseSesSnsNotification(payload: unknown): SesSnsNotification | null {
 
 function getSesFeedbackRecipients(
   notification: SesSnsNotification,
-  kind: "bounce" | "complaint"
+  kind: "bounce" | "complaint",
 ) {
   const recipients =
     kind === "bounce"
       ? notification.bounce?.bouncedRecipients?.map(
-          (entry) => entry.emailAddress
+          (entry) => entry.emailAddress,
         )
       : notification.complaint?.complainedRecipients?.map(
-          (entry) => entry.emailAddress
+          (entry) => entry.emailAddress,
         );
 
   return (recipients ?? notification.mail?.destination ?? []).filter(
-    (email): email is string => Boolean(email)
+    (email): email is string => Boolean(email),
   );
 }
 
@@ -1004,7 +1066,9 @@ export async function ingestSesSnsEmailFeedback(payload: unknown) {
     return { handled: false as const };
   }
   const normalizedRecipients = recipients.map(normalizeEmailAddress);
-  const logRecipients = Array.from(new Set([...recipients, ...normalizedRecipients]));
+  const logRecipients = Array.from(
+    new Set([...recipients, ...normalizedRecipients]),
+  );
 
   await prisma.emailLog.updateMany({
     where: {
@@ -1028,8 +1092,8 @@ export async function ingestSesSnsEmailFeedback(payload: unknown) {
         bounceSubType: notification.bounce?.bounceSubType ?? null,
         complaintFeedbackType:
           notification.complaint?.complaintFeedbackType ?? null,
-      })
-    )
+      }),
+    ),
   );
 
   logger.warn(
@@ -1040,7 +1104,7 @@ export async function ingestSesSnsEmailFeedback(payload: unknown) {
       suppressionsProcessed: suppressionResult.processed,
       suppressionsActive: suppressionResult.suppressed,
     },
-    "Processed SES/SNS email delivery feedback"
+    "Processed SES/SNS email delivery feedback",
   );
 
   return {
@@ -1052,7 +1116,10 @@ export async function ingestSesSnsEmailFeedback(payload: unknown) {
   };
 }
 
-export async function sendEmailChangeNotification(oldEmail: string, newEmail: string) {
+export async function sendEmailChangeNotification(
+  oldEmail: string,
+  newEmail: string,
+) {
   await sendEmail({
     to: oldEmail,
     subject: `Email change requested — ${CLUB_BOOKINGS_NAME}`,
@@ -1069,7 +1136,7 @@ export async function sendCheckinReminderEmail(
   checkIn: Date,
   checkOut: Date,
   guests: Array<{ firstName: string; lastName: string }>,
-  chores: Array<{ name: string; description: string | null }>
+  chores: Array<{ name: string; description: string | null }>,
 ) {
   await sendEmail({
     to: email,
@@ -1174,14 +1241,16 @@ export async function sendAdminPaymentFailureAlert(data: {
 }
 
 // N-06: Admin alert - pending approaching deadline (digest)
-export async function sendAdminPendingDeadlineAlert(bookings: Array<{
-  memberName: string;
-  checkIn: Date;
-  checkOut: Date;
-  guestCount: number;
-  deadline: Date;
-  hoursRemaining: number;
-}>) {
+export async function sendAdminPendingDeadlineAlert(
+  bookings: Array<{
+    memberName: string;
+    checkIn: Date;
+    checkOut: Date;
+    guestCount: number;
+    deadline: Date;
+    hoursRemaining: number;
+  }>,
+) {
   await sendToAdmins({
     subject: `${bookings.length} Pending Booking${bookings.length > 1 ? "s" : ""} Approaching Deadline`,
     html: adminPendingDeadlineTemplate(bookings),
@@ -1190,11 +1259,19 @@ export async function sendAdminPendingDeadlineAlert(bookings: Array<{
       count: bookings.length,
       s: bookings.length === 1 ? "" : "s",
       memberName: bookings.map((booking) => booking.memberName).join(", "),
-      checkIn: bookings.map((booking) => formatNZDate(booking.checkIn)).join(", "),
-      checkOut: bookings.map((booking) => formatNZDate(booking.checkOut)).join(", "),
+      checkIn: bookings
+        .map((booking) => formatNZDate(booking.checkIn))
+        .join(", "),
+      checkOut: bookings
+        .map((booking) => formatNZDate(booking.checkOut))
+        .join(", "),
       guestCount: bookings.map((booking) => booking.guestCount).join(", "),
-      deadline: bookings.map((booking) => formatNZDateTime(booking.deadline)).join(", "),
-      hoursRemaining: bookings.map((booking) => Math.round(booking.hoursRemaining)).join(", "),
+      deadline: bookings
+        .map((booking) => formatNZDateTime(booking.deadline))
+        .join(", "),
+      hoursRemaining: bookings
+        .map((booking) => Math.round(booking.hoursRemaining))
+        .join(", "),
     },
     preferenceKey: "adminPendingDeadline",
   });
@@ -1270,11 +1347,14 @@ export async function sendAdminXeroRepeatedFailureAlert(data: {
 }
 
 // N-03: Admin alert - capacity warning
-export async function sendAdminCapacityWarningAlert(days: Array<{
-  date: Date;
-  occupiedBeds: number;
-  availableBeds: number;
-}>, lodgeCapacity: number) {
+export async function sendAdminCapacityWarningAlert(
+  days: Array<{
+    date: Date;
+    occupiedBeds: number;
+    availableBeds: number;
+  }>,
+  lodgeCapacity: number,
+) {
   await sendToAdmins({
     subject: `Capacity Warning: ${days.length} high-occupancy day${days.length > 1 ? "s" : ""} ahead`,
     html: adminCapacityWarningTemplate(days, lodgeCapacity),
@@ -1321,7 +1401,7 @@ export async function sendAdminDailyDigestAlert(sections: {
 }
 
 export async function sendAdminXeroReconciliationReportAlert(
-  report: XeroReconciliationReportEmail
+  report: XeroReconciliationReportEmail,
 ) {
   const subject =
     report.summary.issueCategoryCount === 0
@@ -1349,10 +1429,13 @@ export async function sendAdminXeroReconciliationReportAlert(
  * Maps template categories to preference fields.
  * Admin alerts bypass preferences entirely.
  */
-const CATEGORY_TO_PREFERENCE: Record<string, keyof Omit<
-  import("@prisma/client").NotificationPreference,
-  "id" | "memberId" | "createdAt" | "updatedAt"
->> = {
+const CATEGORY_TO_PREFERENCE: Record<
+  string,
+  keyof Omit<
+    import("@prisma/client").NotificationPreference,
+    "id" | "memberId" | "createdAt" | "updatedAt"
+  >
+> = {
   bookingConfirmation: "bookingConfirmation",
   bookingReminder: "bookingReminder",
   bookingBumped: "bookingBumped",
@@ -1364,7 +1447,7 @@ const CATEGORY_TO_PREFERENCE: Record<string, keyof Omit<
 
 export async function shouldSendEmail(
   memberId: string,
-  category: string
+  category: string,
 ): Promise<boolean> {
   const prefField = CATEGORY_TO_PREFERENCE[category];
   if (!prefField) {
@@ -1387,7 +1470,7 @@ export async function shouldSendEmail(
 // F-COMP-04: Account deletion approved
 export async function sendAccountDeletionApprovedEmail(
   email: string,
-  firstName: string
+  firstName: string,
 ) {
   await sendEmail({
     to: email,
@@ -1402,7 +1485,7 @@ export async function sendAccountDeletionApprovedEmail(
 export async function sendAccountDeletionRejectedEmail(
   email: string,
   firstName: string,
-  adminNote: string
+  adminNote: string,
 ) {
   await sendEmail({
     to: email,
@@ -1418,7 +1501,7 @@ export async function sendAccountDeletionRejectedEmail(
 export async function sendFamilyGroupInvitationEmail(
   email: string,
   inviterName: string,
-  groupName: string
+  groupName: string,
 ) {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
   const profileUrl = `${baseUrl}/profile`;
@@ -1435,7 +1518,7 @@ export async function sendFamilyGroupInvitationEmail(
 export async function sendFamilyGroupInviteAcceptedEmail(
   email: string,
   inviteeName: string,
-  groupName: string
+  groupName: string,
 ) {
   await sendEmail({
     to: email,
@@ -1450,7 +1533,7 @@ export async function sendChildRequestSubmittedEmail(
   email: string,
   parentName: string,
   childName: string,
-  groupName: string
+  groupName: string,
 ) {
   await sendEmail({
     to: email,
@@ -1465,7 +1548,7 @@ export async function sendChildRequestApprovedEmail(
   email: string,
   parentName: string,
   childName: string,
-  groupName: string
+  groupName: string,
 ) {
   await sendEmail({
     to: email,
@@ -1480,7 +1563,7 @@ export async function sendChildRequestRejectedEmail(
   email: string,
   parentName: string,
   childName: string,
-  reason?: string
+  reason?: string,
 ) {
   await sendEmail({
     to: email,
@@ -1511,7 +1594,7 @@ export async function sendAdminFamilyGroupRequestAlert(data: {
 export async function sendJoinRequestConfirmationEmail(
   email: string,
   requesterName: string,
-  groupName: string
+  groupName: string,
 ) {
   await sendEmail({
     to: email,
@@ -1734,7 +1817,9 @@ export async function sendAdminMemberDeleteApprovedEmail(params: {
   reason: string;
   reviewNote?: string | null;
 }) {
-  if (!(await shouldSendDirectAdminSystemEmail("admin-member-delete-approved"))) {
+  if (
+    !(await shouldSendDirectAdminSystemEmail("admin-member-delete-approved"))
+  ) {
     return;
   }
 
@@ -1763,7 +1848,9 @@ export async function sendAdminMemberDeleteRejectedEmail(params: {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
   const reviewUrl = `${baseUrl}/admin/members/${encodeURIComponent(params.memberId)}`;
 
-  if (!(await shouldSendDirectAdminSystemEmail("admin-member-delete-rejected"))) {
+  if (
+    !(await shouldSendDirectAdminSystemEmail("admin-member-delete-rejected"))
+  ) {
     return;
   }
 
@@ -1820,12 +1907,13 @@ export async function sendAgeUpInvitationEmail(
   email: string,
   firstName: string,
   token: string,
-  context: AgeUpInvitationEmailContext = {}
+  context: AgeUpInvitationEmailContext = {},
 ) {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
   const resetUrl = `${baseUrl}/reset-password?token=${token}`;
   const targetAgeTier = context.targetAgeTier ?? "ADULT";
-  const targetAgeTierLabel = context.targetAgeTierLabel?.trim() || "Adult (18+)";
+  const targetAgeTierLabel =
+    context.targetAgeTierLabel?.trim() || "Adult (18+)";
   const targetAgeTierMinAge = context.targetAgeTierMinAge ?? 18;
 
   await sendEmail({
@@ -1858,10 +1946,11 @@ export interface AgeUpParentEmailHandoffEmailContext {
 // Age-up parent handoff email (sent when the ageing-up member still shares a login email)
 export async function sendAgeUpParentEmailHandoffEmail(
   email: string,
-  context: AgeUpParentEmailHandoffEmailContext
+  context: AgeUpParentEmailHandoffEmailContext,
 ) {
   const targetAgeTier = context.targetAgeTier ?? "ADULT";
-  const targetAgeTierLabel = context.targetAgeTierLabel?.trim() || "Adult (18+)";
+  const targetAgeTierLabel =
+    context.targetAgeTierLabel?.trim() || "Adult (18+)";
   const targetAgeTierMinAge = context.targetAgeTierMinAge ?? 18;
   const memberName = [context.memberFirstName, context.memberLastName]
     .filter(Boolean)
@@ -1983,12 +2072,18 @@ export async function sendWaitlistConfirmationEmail(
   checkIn: Date,
   checkOut: Date,
   guestCount: number,
-  position: number
+  position: number,
 ) {
   await sendEmail({
     to: email,
     subject: `Waitlist Confirmation - ${CLUB_LODGE_NAME}`,
-    html: waitlistConfirmationTemplate(firstName, checkIn, checkOut, guestCount, position),
+    html: waitlistConfirmationTemplate(
+      firstName,
+      checkIn,
+      checkOut,
+      guestCount,
+      position,
+    ),
     templateName: "waitlist-confirmation",
     templateData: {
       firstName,
@@ -2007,12 +2102,19 @@ export async function sendWaitlistOfferEmail(
   checkOut: Date,
   guestCount: number,
   expiresAt: Date,
-  bookingId: string
+  bookingId: string,
 ) {
   await sendEmail({
     to: email,
     subject: `Spot Available! - ${CLUB_LODGE_NAME}`,
-    html: waitlistOfferTemplate(firstName, checkIn, checkOut, guestCount, expiresAt, bookingId),
+    html: waitlistOfferTemplate(
+      firstName,
+      checkIn,
+      checkOut,
+      guestCount,
+      expiresAt,
+      bookingId,
+    ),
     templateName: "waitlist-offer",
     templateData: {
       firstName,
@@ -2030,7 +2132,7 @@ export async function sendWaitlistOfferExpiredEmail(
   firstName: string,
   checkIn: Date,
   checkOut: Date,
-  position: number
+  position: number,
 ) {
   await sendEmail({
     to: email,
@@ -2086,7 +2188,9 @@ export async function sendAdminRefundRequestAlert(data: {
       checkOut: formatNZDate(data.checkOut),
       paidAmount: formatMoneyCents(data.paidAmountCents),
       refundedAmount: formatMoneyCents(data.refundedAmountCents),
-      remainingAmount: formatMoneyCents(data.paidAmountCents - data.refundedAmountCents),
+      remainingAmount: formatMoneyCents(
+        data.paidAmountCents - data.refundedAmountCents,
+      ),
       requestedAmount:
         data.requestedAmountCents === null
           ? ""

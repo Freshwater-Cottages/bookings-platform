@@ -21,13 +21,19 @@ const websiteHeadingFont = League_Spartan({
   variable: "--font-website-heading",
 });
 
-export default async function PublicLayout({ children }: { children: React.ReactNode }) {
+export default async function PublicLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   const [session, lodgeCapacity] = await Promise.all([
     auth(),
     getLodgeCapacity(),
   ]);
   const liveClubIdentity = { ...clubIdentity, lodgeCapacity };
-  const nonce = (await headers()).get(CSP_NONCE_HEADER) ?? undefined;
+  const requestHeaders = await headers();
+  const nonce = requestHeaders.get(CSP_NONCE_HEADER) ?? undefined;
+  const pageSlug = requestHeaders.get("x-page-slug") ?? "home";
 
   return (
     <AppProviders clubIdentity={liveClubIdentity} nonce={nonce}>
@@ -43,7 +49,7 @@ export default async function PublicLayout({ children }: { children: React.React
             {children}
           </div>
         </main>
-        <WebsiteFooter />
+        <WebsiteFooter pageSlug={pageSlug} />
       </div>
     </AppProviders>
   );

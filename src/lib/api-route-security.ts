@@ -27,7 +27,8 @@ export const explicitPublicApiRoutes = {
   },
   "src/app/api/applications/route.ts": {
     boundary: "public",
-    reason: "Anonymous membership application submission with validation and rate limiting.",
+    reason:
+      "Anonymous membership application submission with validation and rate limiting.",
   },
   "src/app/api/auth/[...nextauth]/route.ts": {
     boundary: "public",
@@ -39,7 +40,8 @@ export const explicitPublicApiRoutes = {
   },
   "src/app/api/auth/forgot-password/route.ts": {
     boundary: "public",
-    reason: "Password reset request endpoint with non-enumerating behavior and rate limiting.",
+    reason:
+      "Password reset request endpoint with non-enumerating behavior and rate limiting.",
   },
   "src/app/api/auth/register/route.ts": {
     boundary: "public",
@@ -59,27 +61,33 @@ export const explicitPublicApiRoutes = {
   },
   "src/app/api/booking-requests/quote/route.ts": {
     boundary: "public",
-    reason: "Anonymous indicative non-member pricing quote for the booking request form, gated by the pricing-visibility setting and rate limited.",
+    reason:
+      "Anonymous indicative non-member pricing quote for the booking request form, gated by the pricing-visibility setting and rate limited.",
   },
   "src/app/api/booking-requests/route.ts": {
     boundary: "public",
-    reason: "Anonymous non-member booking request submission with validation, CRLF stripping and rate limiting; creates only an unverified BookingRequest, never a booking.",
+    reason:
+      "Anonymous non-member booking request submission with validation, CRLF stripping and rate limiting; creates only an unverified BookingRequest, never a booking.",
   },
   "src/app/api/booking-requests/school/route.ts": {
     boundary: "public",
-    reason: "Anonymous school group booking request submission with validation, CRLF stripping and rate limiting; creates only an unverified SCHOOL BookingRequest, never a booking.",
+    reason:
+      "Anonymous school group booking request submission with validation, CRLF stripping and rate limiting; creates only an unverified SCHOOL BookingRequest, never a booking.",
   },
   "src/app/api/booking-requests/settings/route.ts": {
     boundary: "public",
-    reason: "Public read of the booking request pricing-visibility flag used to label the request form; rate limited.",
+    reason:
+      "Public read of the booking request pricing-visibility flag used to label the request form; rate limited.",
   },
   "src/app/api/booking-requests/verify/[token]/route.ts": {
     boundary: "public",
-    reason: "Token-bearing booking request email verification endpoint; returns only non-PII summary fields and is rate limited.",
+    reason:
+      "Token-bearing booking request email verification endpoint; returns only non-PII summary fields and is rate limited.",
   },
   "src/app/api/chores/[token]/route.ts": {
     boundary: "public",
-    reason: "Guest chore token endpoint with rate limiting and read-only mutation behavior.",
+    reason:
+      "Guest chore token endpoint with rate limiting and read-only mutation behavior.",
   },
   "src/app/api/committee/route.ts": {
     boundary: "public",
@@ -107,19 +115,28 @@ export const explicitPublicApiRoutes = {
   },
   "src/app/api/pay/[token]/payment-intent/route.ts": {
     boundary: "public",
-    reason: "Token-authenticated Stripe payment intent for a tokenised booking payment link; revalidates status/capacity like the session path and is rate limited.",
+    reason:
+      "Token-authenticated Stripe payment intent for a tokenised booking payment link; revalidates status/capacity like the session path and is rate limited.",
   },
   "src/app/api/pay/[token]/refresh/route.ts": {
     boundary: "public",
-    reason: "Token-authenticated self-service re-issue of an expired booking payment link; only the matching token resolves a booking and it is rate limited.",
+    reason:
+      "Token-authenticated self-service re-issue of an expired booking payment link; only the matching token resolves a booking and it is rate limited.",
   },
   "src/app/api/pay/[token]/route.ts": {
     boundary: "public",
-    reason: "Token-authenticated public payment link page data; only the matching token resolves a booking and it is rate limited.",
+    reason:
+      "Token-authenticated public payment link page data; only the matching token resolves a booking and it is rate limited.",
   },
   "src/app/api/images/[id]/route.ts": {
     boundary: "public",
-    reason: "Serves uploaded page-content images embedded in public website pages.",
+    reason:
+      "Serves uploaded page-content images embedded in public website pages.",
+  },
+  "src/app/api/images/uploaded/[...path]/route.ts": {
+    boundary: "public",
+    reason:
+      "Serves Image Manager uploads from the shared images volume at runtime.",
   },
   "src/app/api/webhooks/ses-sns/route.ts": {
     boundary: "webhook",
@@ -136,7 +153,5 @@ export const explicitPublicApiRoutes = {
 } as const satisfies Record<string, ApiRouteSecurityMetadata>;
 
 export function getExplicitPublicApiRoute(path: string) {
-  return explicitPublicApiRoutes[
-    path as keyof typeof explicitPublicApiRoutes
-  ];
+  return explicitPublicApiRoutes[path as keyof typeof explicitPublicApiRoutes];
 }
