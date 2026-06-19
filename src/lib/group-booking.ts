@@ -299,7 +299,12 @@ export interface GroupBookingRecordForSummary {
   status: GroupBookingStatus;
   paymentMode: GroupBookingPaymentMode;
   joinDeadline: Date | null;
-  organiserBooking: { checkIn: Date; checkOut: Date };
+  organiserBooking: {
+    checkIn: Date;
+    checkOut: Date;
+    status: BookingStatus;
+    deletedAt: Date | null;
+  };
   organiserMember: { firstName: string };
 }
 
@@ -318,6 +323,24 @@ export function isGroupJoinable(
   return !group.joinDeadline || group.joinDeadline.getTime() > now.getTime();
 }
 
+/**
+ * True when the organiser's host booking is still live, so the group can
+ * actually accept joins. Mirrors the gate joinGroupBookingAsMember and
+ * verifyAndCreateNonMemberJoin enforce: a cancelled / bumped / completed or
+ * soft-deleted host booking can host no further joins. Kept separate from
+ * isGroupJoinable so the public summary's hint matches what those write paths
+ * accept, even though they re-check it themselves under the capacity lock.
+ */
+export function isOrganiserBookingActive(booking: {
+  status: BookingStatus;
+  deletedAt: Date | null;
+}): boolean {
+  return (
+    !booking.deletedAt &&
+    (ACTIVE_BOOKING_STATUSES as readonly BookingStatus[]).includes(booking.status)
+  );
+}
+
 /** Pure mapping from the selected record to the public-safe summary. */
 export function toGroupBookingSummary(
   group: GroupBookingRecordForSummary,
@@ -331,7 +354,12 @@ export function toGroupBookingSummary(
     checkIn: group.organiserBooking.checkIn,
     checkOut: group.organiserBooking.checkOut,
     joinDeadline: group.joinDeadline,
-    isJoinable: isGroupJoinable(group, now),
+    // A group is only joinable when BOTH the group itself is open/in-deadline
+    // AND its host booking is still active; otherwise the public page would
+    // invite joins the write paths will reject.
+    isJoinable:
+      isGroupJoinable(group, now) &&
+      isOrganiserBookingActive(group.organiserBooking),
   };
 }
 
@@ -354,7 +382,9 @@ export async function resolveGroupBookingByCode(
       status: true,
       paymentMode: true,
       joinDeadline: true,
-      organiserBooking: { select: { checkIn: true, checkOut: true } },
+      organiserBooking: {
+        select: { checkIn: true, checkOut: true, status: true, deletedAt: true },
+      },
       organiserMember: { select: { firstName: true } },
     },
   });
