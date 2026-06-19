@@ -74,7 +74,7 @@ import { ACTIVE_BOOKING_STATUSES } from "@/lib/booking-status";
 // Organiser booking states that may host a group. The organiser must be
 // committed (their own beds already reserved) before opening the group to
 // others, so we require a capacity-holding or payment-pending status.
-const OPENABLE_ORGANISER_STATUSES: readonly string[] = [
+export const OPENABLE_ORGANISER_STATUSES: readonly string[] = [
   "PAID",
   "CONFIRMED",
   "PAYMENT_PENDING",
