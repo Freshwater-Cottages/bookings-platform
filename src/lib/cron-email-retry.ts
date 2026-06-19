@@ -3,19 +3,10 @@ import nodemailer from "nodemailer";
 import { EMAIL_FROM, formatEmailFromAddress } from "./email-sender";
 import { htmlToPlainText } from "./email-text";
 import logger from "@/lib/logger";
+import { resolveEmailDeliveryConfig } from "@/lib/email-delivery";
 
 const MAX_ATTEMPTS = 3;
 const RETRY_FAILURE_ALERT_TEMPLATE = "admin-email-failure";
-
-const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST || "email-smtp.ap-southeast-2.amazonaws.com",
-  port: Number(process.env.SMTP_PORT) || 587,
-  secure: false,
-  auth: {
-    user: process.env.AWS_SES_ACCESS_KEY_ID || "",
-    pass: process.env.AWS_SES_SECRET_ACCESS_KEY || "",
-  },
-});
 
 /**
  * N-11: Retry failed emails with backoff.
@@ -26,7 +17,21 @@ const transporter = nodemailer.createTransport({
  * BOUNCED, so they are excluded from retry recovery.
  * Runs every 30 minutes.
  */
-export async function retryFailedEmails(): Promise<{ retried: number; succeeded: number; failed: number }> {
+export async function retryFailedEmails(): Promise<{
+  retried: number;
+  succeeded: number;
+  failed: number;
+}> {
+  const emailDelivery = resolveEmailDeliveryConfig();
+  if (!emailDelivery.ok || !emailDelivery.transportOptions) {
+    throw new Error(
+      `Email retry skipped: delivery config invalid (${emailDelivery.issues.join("; ")})`,
+    );
+  }
+  const transporter = nodemailer.createTransport(
+    emailDelivery.transportOptions,
+  );
+
   // Backoff: don't retry emails until at least 15 minutes after the last attempt
   const backoffThreshold = new Date(Date.now() - 15 * 60 * 1000);
 
@@ -51,7 +56,10 @@ export async function retryFailedEmails(): Promise<{ retried: number; succeeded:
 
     try {
       if (process.env.NODE_ENV === "development") {
-        logger.info({ to: emailLog.to, subject: emailLog.subject }, "Email retry (dev mode)");
+        logger.info(
+          { to: emailLog.to, subject: emailLog.subject },
+          "Email retry (dev mode)",
+        );
         await prisma.emailLog.update({
           where: { id: emailLog.id },
           data: {
@@ -88,19 +96,27 @@ export async function retryFailedEmails(): Promise<{ retried: number; succeeded:
       succeeded++;
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
-      logger.error({ err, emailLogId: emailLog.id, attempt: newAttempts }, "Email retry failed");
+      logger.error(
+        { err, emailLogId: emailLog.id, attempt: newAttempts },
+        "Email retry failed",
+      );
 
-      await prisma.emailLog.update({
-        where: { id: emailLog.id },
-        data: {
-          attempts: newAttempts,
-          lastAttemptAt: new Date(),
-          errorMessage,
-          // Keep status as FAILED — will retry again if attempts < MAX
-        },
-      }).catch((updateErr) => {
-        logger.error({ err: updateErr, emailLogId: emailLog.id }, "Failed to update EmailLog after retry failure");
-      });
+      await prisma.emailLog
+        .update({
+          where: { id: emailLog.id },
+          data: {
+            attempts: newAttempts,
+            lastAttemptAt: new Date(),
+            errorMessage,
+            // Keep status as FAILED — will retry again if attempts < MAX
+          },
+        })
+        .catch((updateErr) => {
+          logger.error(
+            { err: updateErr, emailLogId: emailLog.id },
+            "Failed to update EmailLog after retry failure",
+          );
+        });
 
       // Alert admin when email exhausts retries
       if (

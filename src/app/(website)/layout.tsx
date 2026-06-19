@@ -7,6 +7,10 @@ import { getWebsiteThemeRenderState } from "@/lib/club-theme";
 import { clubThemeFontVariableClassName } from "@/lib/club-theme-fonts";
 import { CSP_NONCE_HEADER } from "@/lib/csp";
 
+function resolvePageSlug(requestHeaders: Headers) {
+  return requestHeaders.get("x-page-slug") ?? "home";
+}
+
 export default async function WebsiteLayout({
   children,
 }: {
@@ -18,6 +22,7 @@ export default async function WebsiteLayout({
     headers(),
   ]);
   const nonce = requestHeaders.get(CSP_NONCE_HEADER) ?? undefined;
+  const pageSlug = resolvePageSlug(requestHeaders);
   const themeStyle = (
     <style
       nonce={nonce}
@@ -67,7 +72,7 @@ export default async function WebsiteLayout({
         logoDataUrl={theme.logoDataUrl}
       />
       <main className="flex-1">{children}</main>
-      <WebsiteFooter logoDataUrl={theme.logoDataUrl} />
+      <WebsiteFooter logoDataUrl={theme.logoDataUrl} pageSlug={pageSlug} />
     </div>
   );
 }

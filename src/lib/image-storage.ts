@@ -12,9 +12,10 @@ import path from "path";
 // also keeps the path-traversal containment checks below statically verifiable.
 export const IMAGES_ROOT = path.join(process.cwd(), "public", "images");
 
-// Public URL prefix that serves IMAGES_ROOT. Stored image URLs are always of the
-// form `/images/<relative-path>` regardless of where IMAGES_ROOT lives on disk.
-const PUBLIC_URL_PREFIX = "/images";
+// Public URL prefix that serves IMAGES_ROOT. Stored image URLs use an API route
+// so newly uploaded files are readable immediately in production without relying
+// on Next.js public-file startup indexing.
+const PUBLIC_URL_PREFIX = "/api/images/uploaded";
 
 // SVG is intentionally excluded: it is an XML dialect that can embed inline
 // <script> and event-handler attributes. Files under the images root are served
@@ -42,7 +43,10 @@ export const ALLOWED_IMAGE_EXTS = new Set([
 export function resolveInImagesRoot(rel: string): string | null {
   const normalized = path.normalize(rel);
   const resolved = path.resolve(IMAGES_ROOT, normalized);
-  if (resolved !== IMAGES_ROOT && !resolved.startsWith(IMAGES_ROOT + path.sep)) {
+  if (
+    resolved !== IMAGES_ROOT &&
+    !resolved.startsWith(IMAGES_ROOT + path.sep)
+  ) {
     return null;
   }
   return resolved;

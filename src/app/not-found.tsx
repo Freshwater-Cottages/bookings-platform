@@ -2,16 +2,24 @@ import Link from "next/link";
 import { buildBookingLoginPath } from "@/lib/auth-redirect";
 import { getSanitizedPageContentByPath } from "@/lib/page-content-html";
 
+function pageSlugFromPath(path: string) {
+  return path.replace(/^\//, "") || "home";
+}
+
 export default async function NotFound() {
   const page = await getSanitizedPageContentByPath("/404").catch(() => null);
 
   if (page) {
     const headerHtml = { __html: page.headerText };
     const bodyHtml = { __html: page.contentHtml };
+    const pageSlug = pageSlugFromPath(page.path);
 
     return (
       <>
-        <section className="dynamic-header bg-gradient-to-br from-brand-charcoal to-brand-deep py-16 text-brand-snow sm:py-20">
+        <section
+          className="dynamic-header bg-gradient-to-br from-brand-charcoal to-brand-deep py-16 text-brand-snow sm:py-20"
+          data-page-slug={pageSlug}
+        >
           <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
             {page.caption && (
               <span className="website-eyebrow mb-4">{page.caption}</span>
@@ -28,7 +36,10 @@ export default async function NotFound() {
           </div>
         </section>
 
-        <section className="dynamic-body bg-brand-snow py-16 sm:py-20">
+        <section
+          className="dynamic-body bg-brand-snow py-16 sm:py-20"
+          data-page-slug={pageSlug}
+        >
           <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
             {page.contentHtml ? (
               <div
