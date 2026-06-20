@@ -48,6 +48,10 @@ import {
   type BookingGuestInput as PricedGuestInput,
 } from "@/lib/booking-create";
 import {
+  DEFAULT_BOOKING_PAYMENT_METHOD,
+  type BookingPaymentMethod,
+} from "@/lib/booking-payment-methods";
+import {
   assertLinkedBookingMembersCanBeBooked,
   normalizeBookingGuestInputs,
   resolveLinkedBookingMembers,
@@ -431,7 +435,11 @@ export interface JoinGroupBookingResult {
  * be a member; a non-member guest is rejected with a clear message.
  */
 export async function joinGroupBookingAsMember(
-  input: { code: string; guests: BookingGuestInput[] },
+  input: {
+    code: string;
+    guests: BookingGuestInput[];
+    paymentMethod?: BookingPaymentMethod;
+  },
   sessionUserId: string,
   sessionRole: string
 ): Promise<JoinGroupBookingResult> {
@@ -610,6 +618,14 @@ export async function joinGroupBookingAsMember(
     holdDays: 0,
   });
 
+  // Payment method only applies to EACH_PAYS_OWN joiners who pay for their own
+  // beds. An ORGANISER_PAYS joiner is organiserSettled (never billed, no payment
+  // record created at join), so force the default and never raise an Internet
+  // Banking invoice to the joiner. Module availability is gated in the route.
+  const effectivePaymentMethod: BookingPaymentMethod = organiserSettled
+    ? DEFAULT_BOOKING_PAYMENT_METHOD
+    : input.paymentMethod ?? DEFAULT_BOOKING_PAYMENT_METHOD;
+
   const outcome = await createConfirmedBooking({
     effectiveMemberId: sessionUserId,
     isOnBehalf: false,
@@ -633,6 +649,9 @@ export async function joinGroupBookingAsMember(
     // ORGANISER_PAYS: flag the child booking so the joiner is never billed and
     // cannot pay it; the organiser settles the group total. No-op for each-pays.
     organiserSettled,
+    // EACH_PAYS_OWN joiner can pay by card or Internet Banking; createConfirmedBooking
+    // raises + emails the Xero invoice when internet_banking is chosen.
+    paymentMethod: effectivePaymentMethod,
   });
 
   if (outcome.type === "capacityExceeded") {

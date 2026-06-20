@@ -3,7 +3,7 @@
 import type { AgeTier } from "@prisma/client";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { CheckCircle2, Info } from "lucide-react";
+import { CheckCircle2, CreditCard, Info, Landmark } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -18,7 +18,10 @@ import {
   getFamilyMemberBookingBlockMessage,
   type BookingFamilyMember,
 } from "@/lib/family-booking";
+import { buildInternetBankingPaymentReference } from "@/lib/booking-payment-methods";
 import { formatNZDate } from "@/lib/nzst-date";
+
+type PaymentMethod = "stripe" | "internet_banking";
 
 interface GroupSummary {
   code: string;
@@ -65,6 +68,9 @@ export function MemberGroupJoinPanel({
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState("");
+  const [internetBankingEnabled, setInternetBankingEnabled] = useState(false);
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("stripe");
+  const [ibReference, setIbReference] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -102,6 +108,18 @@ export function MemberGroupJoinPanel({
     };
   }, [code]);
 
+  // Internet Banking is an optional module; only offer it when it's on.
+  useEffect(() => {
+    fetch("/api/payments/options")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) =>
+        setInternetBankingEnabled(
+          Boolean(data?.methods?.internetBanking?.enabled)
+        )
+      )
+      .catch(() => setInternetBankingEnabled(false));
+  }, []);
+
   function toggle(id: string) {
     setError("");
     setSelectedIds((prev) => {
@@ -117,10 +135,16 @@ export function MemberGroupJoinPanel({
 
   const selectedMembers = familyMembers.filter((fm) => selectedIds.has(fm.id));
   const canSubmit = selectedMembers.length > 0 && !submitting;
+  // The payment-method choice only applies when the joiner pays for their own
+  // beds (EACH_PAYS_OWN) and the Internet Banking module is on.
+  const showPaymentMethodChoice =
+    summary?.paymentMode === "EACH_PAYS_OWN" && internetBankingEnabled;
 
   async function submit() {
     setSubmitting(true);
     setError("");
+    const usingInternetBanking =
+      showPaymentMethodChoice && paymentMethod === "internet_banking";
     try {
       const res = await fetch(
         `/api/group-bookings/${encodeURIComponent(code)}/join`,
@@ -135,6 +159,7 @@ export function MemberGroupJoinPanel({
               isMember: true,
               memberId: fm.id,
             })),
+            paymentMethod: usingInternetBanking ? "internet_banking" : "stripe",
           }),
         }
       );
@@ -142,8 +167,15 @@ export function MemberGroupJoinPanel({
       if (!res.ok) {
         throw new Error(data.error || "Unable to join right now.");
       }
-      // EACH_PAYS_OWN joiners owe for their beds — send them to the booking to
-      // pay. ORGANISER_PAYS (and $0) joins are done, so confirm in place.
+      // Internet Banking: the Xero invoice is emailed; confirm in place with the
+      // payment reference instead of opening the card flow.
+      if (usingInternetBanking && data.bookingId) {
+        setIbReference(buildInternetBankingPaymentReference(data.bookingId));
+        setSubmitted(true);
+        return;
+      }
+      // EACH_PAYS_OWN card joiners owe for their beds — send them to the booking
+      // to pay. ORGANISER_PAYS (and $0) joins are done, so confirm in place.
       if (data.requiresPayment && data.bookingId) {
         router.push(`/bookings/${data.bookingId}`);
         return;
@@ -213,11 +245,25 @@ export function MemberGroupJoinPanel({
                 <CheckCircle2 className="h-6 w-6 shrink-0" />
                 <p className="font-medium">You&apos;re in!</p>
               </div>
-              <p className="text-sm text-muted-foreground">
-                {summary.paymentMode === "ORGANISER_PAYS"
-                  ? `${summary.organiserFirstName} is settling the beds for this group, so there's nothing more to pay. We've added you to the group.`
-                  : "You've been added to the group."}
-              </p>
+              {ibReference ? (
+                <>
+                  <p className="text-sm text-muted-foreground">
+                    We&apos;ve emailed you an invoice. Pay by internet banking using
+                    the reference below, and we&apos;ll confirm your beds once it
+                    arrives.
+                  </p>
+                  <div className="rounded-md border border-slate-200 p-3 text-sm">
+                    <p className="font-medium text-slate-900">Payment reference</p>
+                    <p className="mt-1 font-mono text-slate-900">{ibReference}</p>
+                  </div>
+                </>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  {summary.paymentMode === "ORGANISER_PAYS"
+                    ? `${summary.organiserFirstName} is settling the beds for this group, so there's nothing more to pay. We've added you to the group.`
+                    : "You've been added to the group."}
+                </p>
+              )}
               <Button variant="outline" onClick={() => router.push("/bookings")}>
                 View my bookings
               </Button>
@@ -274,6 +320,44 @@ export function MemberGroupJoinPanel({
                 </p>
               </div>
 
+              {showPaymentMethodChoice ? (
+                <div className="space-y-2">
+                  <p className="text-sm font-medium text-muted-foreground">How would you like to pay?</p>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <button
+                      type="button"
+                      onClick={() => setPaymentMethod("stripe")}
+                      className={`flex min-h-16 items-start gap-3 rounded-md border p-3 text-left text-sm ${
+                        paymentMethod === "stripe"
+                          ? "border-blue-500 bg-blue-50 text-blue-950"
+                          : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+                      }`}
+                    >
+                      <CreditCard className="mt-0.5 h-4 w-4 shrink-0" />
+                      <span>
+                        <span className="block font-medium">Card</span>
+                        <span className="block text-xs opacity-80">Pay now to secure your beds.</span>
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPaymentMethod("internet_banking")}
+                      className={`flex min-h-16 items-start gap-3 rounded-md border p-3 text-left text-sm ${
+                        paymentMethod === "internet_banking"
+                          ? "border-blue-500 bg-blue-50 text-blue-950"
+                          : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+                      }`}
+                    >
+                      <Landmark className="mt-0.5 h-4 w-4 shrink-0" />
+                      <span>
+                        <span className="block font-medium">Internet Banking</span>
+                        <span className="block text-xs opacity-80">Receive a Xero invoice by email.</span>
+                      </span>
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+
               {error ? (
                 <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
                   {error}
@@ -285,7 +369,9 @@ export function MemberGroupJoinPanel({
                   ? "Joining..."
                   : summary.paymentMode === "ORGANISER_PAYS"
                     ? "Join group"
-                    : "Join and pay"}
+                    : showPaymentMethodChoice && paymentMethod === "internet_banking"
+                      ? "Join (invoice by email)"
+                      : "Join and pay"}
               </Button>
             </>
           )}
