@@ -58,6 +58,7 @@ function stubFetch(opts: {
   summary?: Record<string, unknown>;
   joinOk?: boolean;
   joinBody?: Record<string, unknown>;
+  internetBankingEnabled?: boolean;
 }) {
   const fetchMock = vi.fn(async (url: string, init?: { method?: string }) => {
     const u = String(url);
@@ -65,6 +66,17 @@ function stubFetch(opts: {
       return {
         ok: opts.joinOk ?? true,
         json: async () => opts.joinBody ?? {},
+      } as Response;
+    }
+    if (u.includes("/api/payments/options")) {
+      return {
+        ok: true,
+        json: async () => ({
+          methods: {
+            stripe: { enabled: true },
+            internetBanking: { enabled: opts.internetBankingEnabled ?? false },
+          },
+        }),
       } as Response;
     }
     if (u.includes("/api/members/family")) {
@@ -121,6 +133,46 @@ describe("MemberGroupJoinPanel", () => {
     await waitFor(() => {
       expect(pushMock).toHaveBeenCalledWith("/bookings/b1");
     });
+  });
+
+  it("offers internet banking for EACH_PAYS_OWN and confirms in place with a reference", async () => {
+    const fetchMock = stubFetch({
+      summary: summary({ paymentMode: "EACH_PAYS_OWN" }),
+      internetBankingEnabled: true,
+      joinBody: { bookingId: "b1", organiserSettled: false, requiresPayment: true },
+    });
+
+    render(<MemberGroupJoinPanel club={club} code={CODE} />);
+
+    // Pick internet banking, then join.
+    fireEvent.click(await screen.findByRole("button", { name: /Internet Banking/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Join \(invoice by email\)/ }));
+
+    // Confirms in place with the BOOKING- reference, no redirect to pay.
+    expect(await screen.findByText(/BOOKING-B1/)).toBeDefined();
+    expect(pushMock).not.toHaveBeenCalledWith("/bookings/b1");
+
+    // The join POST forwarded the internet_banking method.
+    const joinCall = fetchMock.mock.calls.find(
+      ([url, init]) => String(url).includes("/join") && init?.method === "POST"
+    );
+    expect(joinCall).toBeDefined();
+    expect(JSON.parse((joinCall![1] as { body: string }).body).paymentMethod).toBe(
+      "internet_banking"
+    );
+  });
+
+  it("hides the internet banking option when the module is off", async () => {
+    stubFetch({
+      summary: summary({ paymentMode: "EACH_PAYS_OWN" }),
+      internetBankingEnabled: false,
+      joinBody: { bookingId: "b1", requiresPayment: true },
+    });
+
+    render(<MemberGroupJoinPanel club={club} code={CODE} />);
+
+    await screen.findByRole("button", { name: /Join and pay/ });
+    expect(screen.queryByRole("button", { name: /Internet Banking/ })).toBeNull();
   });
 
   it("surfaces a join error from the API", async () => {
