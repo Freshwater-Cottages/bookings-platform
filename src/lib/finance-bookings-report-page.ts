@@ -72,6 +72,13 @@ export interface FinanceBookingsReportStatusRow {
   drilldownHref: string;
 }
 
+export interface FinanceBookingsReportChartPoint {
+  date: string;
+  occupancyRate: number;
+  guestNights: number;
+  bookedRevenueCents: number;
+}
+
 export interface FinanceBookingsReportSection {
   title: string;
   description: string;
@@ -80,6 +87,7 @@ export interface FinanceBookingsReportSection {
   cards: FinanceBookingsReportSummaryCard[];
   dailyRows: FinanceBookingsReportDailyRow[];
   statusRows: FinanceBookingsReportStatusRow[];
+  chart: { byDate: FinanceBookingsReportChartPoint[] };
   emptyMessage?: string;
 }
 
@@ -431,6 +439,14 @@ function mapRealizedSection(
         }),
       })
     ),
+    chart: {
+      byDate: realized.byDate.map((row) => ({
+        date: row.date,
+        occupancyRate: row.occupancyRate,
+        guestNights: row.guestNights,
+        bookedRevenueCents: row.bookedRevenueCents,
+      })),
+    },
     emptyMessage:
       realized.byDate.length === 0
         ? "No realized stay dates fall inside the selected window after applying the cutoff."
@@ -527,6 +543,14 @@ function mapForwardSection(
     ],
     dailyRows: forward.byDate.map((row) => mapForwardDailyRow(row)),
     statusRows,
+    chart: {
+      byDate: forward.byDate.map((row) => ({
+        date: row.date,
+        occupancyRate: row.totalPipeline.occupancyRate,
+        guestNights: row.totalPipeline.guestNights,
+        bookedRevenueCents: row.totalPipeline.bookedRevenueCents,
+      })),
+    },
     emptyMessage:
       forward.byDate.length === 0
         ? "No future stay dates fall strictly after the selected as-of date for this window."
@@ -567,6 +591,7 @@ function buildUnavailableSection(input: {
     cards: [],
     dailyRows: [],
     statusRows: [],
+    chart: { byDate: [] },
   };
 }
 

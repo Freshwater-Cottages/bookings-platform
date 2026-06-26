@@ -1,0 +1,78 @@
+import { formatCents } from "@/lib/utils";
+
+/**
+ * Shared palette and value formatters for the finance dashboard charts. Colours
+ * follow the brand tokens in globals.css so charts sit consistently with the
+ * rest of the app.
+ */
+export const FINANCE_SERIES_COLORS = {
+  revenue: "#ffcb05", // brand gold
+  costs: "#ff7c12", // safety orange
+  bookings: "#6a6a63", // ridge
+  neutral: "#4d4d46", // charcoal
+  positive: "#16a34a",
+  negative: "#dc2626",
+  accent: "#2563eb",
+} as const;
+
+/** Ordered palette for mix/breakdown charts (pies, stacked bars). */
+export const FINANCE_MIX_COLORS = [
+  "#ffcb05",
+  "#ff7c12",
+  "#6a6a63",
+  "#2563eb",
+  "#16a34a",
+  "#9333ea",
+  "#2f2f2b",
+  "#d9d5c2",
+] as const;
+
+export type FinanceValueType = "currency" | "count" | "percent";
+
+const wholeNumber = new Intl.NumberFormat("en-NZ", {
+  maximumFractionDigits: 0,
+});
+
+const percentFormatter = new Intl.NumberFormat("en-NZ", {
+  style: "percent",
+  minimumFractionDigits: 1,
+  maximumFractionDigits: 1,
+});
+
+/** Full-precision value for tooltips and labels. */
+export function formatFinanceValue(
+  value: number,
+  valueType: FinanceValueType
+): string {
+  switch (valueType) {
+    case "currency":
+      return formatCents(value);
+    case "percent":
+      return percentFormatter.format(value);
+    case "count":
+    default:
+      return wholeNumber.format(value);
+  }
+}
+
+/** Compact value for chart axis ticks (e.g. "$10k", "1.2k", "5%"). */
+export function formatFinanceAxisTick(
+  value: number,
+  valueType: FinanceValueType
+): string {
+  if (valueType === "percent") {
+    return percentFormatter.format(value);
+  }
+
+  if (valueType === "currency") {
+    const dollars = value / 100;
+    const abs = Math.abs(dollars);
+    if (abs >= 1_000_000) return `$${(dollars / 1_000_000).toFixed(1)}m`;
+    if (abs >= 1_000) return `$${Math.round(dollars / 1_000)}k`;
+    return `$${Math.round(dollars)}`;
+  }
+
+  const abs = Math.abs(value);
+  if (abs >= 1_000) return `${(value / 1_000).toFixed(1)}k`;
+  return wholeNumber.format(value);
+}

@@ -33,6 +33,11 @@ import {
   type FinanceRevenueReportMonthlyRow,
   type FinanceRevenueReportSummaryCard,
 } from "@/lib/finance-revenue-report-page";
+import { buildFinanceRevenueReconciliation } from "@/lib/finance-revenue-reconciliation";
+import { FINANCE_SERIES_COLORS } from "@/components/finance/charts/finance-chart-theme";
+import { TrendChart } from "@/components/finance/charts/trend-chart";
+import { MixPieChart } from "@/components/finance/charts/mix-pie-chart";
+import { ReconciliationPanel } from "@/components/finance/charts/reconciliation-panel";
 
 type FinanceRevenuePageSearchParams = Promise<
   Record<string, string | string[] | undefined>
@@ -168,6 +173,9 @@ export default async function FinanceRevenuePage({
   const model = await buildFinanceRevenueReportPageModel({
     member,
     searchParams: searchParams ? await searchParams : undefined,
+  });
+  const reconciliation = await buildFinanceRevenueReconciliation({
+    periods: model.filters.periods,
   });
 
   return (
@@ -306,6 +314,83 @@ export default async function FinanceRevenuePage({
       ) : (
         <>
           <SummaryCards cards={model.summaryCards} />
+
+          <div className="grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg text-slate-900">
+                  Monthly revenue
+                </CardTitle>
+                <CardDescription className="text-sm text-slate-600">
+                  Total income per month from the synced profit-and-loss
+                  snapshots.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <TrendChart
+                  variant="bar"
+                  xKey="label"
+                  data={model.chart.monthly}
+                  series={[
+                    {
+                      key: "revenueCents",
+                      name: "Revenue",
+                      color: FINANCE_SERIES_COLORS.revenue,
+                      valueType: "currency",
+                    },
+                  ]}
+                  emptyMessage="No monthly revenue snapshots are available yet."
+                />
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg text-slate-900">
+                  Revenue mix
+                </CardTitle>
+                <CardDescription className="text-sm text-slate-600">
+                  Income line items from the latest synced month.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <MixPieChart
+                  data={model.chart.mix.map((item) => ({
+                    name: item.name,
+                    value: item.valueCents,
+                  }))}
+                  valueType="currency"
+                  emptyMessage="No revenue line items were available in the latest snapshot."
+                />
+              </CardContent>
+            </Card>
+          </div>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg text-slate-900">
+                Revenue reconciliation
+              </CardTitle>
+              <CardDescription className="text-sm text-slate-600">
+                Compares hut-fee income recognised in Xero against hut-fee
+                revenue recorded by the booking system over the same months.
+                Membership income is shown from Xero only because the app stores
+                the paid-membership count rather than a fee amount.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ReconciliationPanel
+                overallStatus={reconciliation.overallStatus}
+                periods={reconciliation.periods.map((period) => ({
+                  periodLabel: period.periodLabel,
+                  xeroHutFeesIncomeCents: period.xeroHutFeesIncomeCents,
+                  bookingHutFeesCents: period.bookingHutFeesCents,
+                  varianceCents: period.varianceCents,
+                  status: period.status,
+                }))}
+              />
+            </CardContent>
+          </Card>
 
           <div className="grid gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(22rem,1fr)]">
             <Card>

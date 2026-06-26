@@ -35,6 +35,9 @@ import {
 } from "@/lib/finance-bookings-report-page";
 import { requireFinanceViewer } from "@/lib/finance-auth";
 import { CLUB_NAME } from "@/config/club-identity";
+import { APP_LOCALE, APP_TIME_ZONE } from "@/config/operational";
+import { FINANCE_SERIES_COLORS } from "@/components/finance/charts/finance-chart-theme";
+import { TrendChart } from "@/components/finance/charts/trend-chart";
 
 type FinanceBookingsPageSearchParams = Promise<
   Record<string, string | string[] | undefined>
@@ -85,6 +88,78 @@ function SummarySection({
         ))}
       </div>
     </section>
+  );
+}
+
+function formatChartDate(dateOnly: string): string {
+  return new Date(`${dateOnly}T00:00:00.000Z`).toLocaleDateString(APP_LOCALE, {
+    day: "numeric",
+    month: "short",
+    timeZone: APP_TIME_ZONE,
+  });
+}
+
+function SectionCharts({ section }: { section: FinanceBookingsReportSection }) {
+  if (section.chart.byDate.length === 0) {
+    return null;
+  }
+
+  const data = section.chart.byDate.map((point) => ({
+    label: formatChartDate(point.date),
+    occupancyRate: point.occupancyRate,
+    guestNights: point.guestNights,
+  }));
+
+  return (
+    <div className="grid gap-4 lg:grid-cols-2">
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg text-slate-900">Occupancy</CardTitle>
+          <CardDescription className="text-sm text-slate-600">
+            Daily occupancy rate across the window.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <TrendChart
+            variant="area"
+            xKey="label"
+            data={data}
+            series={[
+              {
+                key: "occupancyRate",
+                name: "Occupancy",
+                color: FINANCE_SERIES_COLORS.bookings,
+                valueType: "percent",
+              },
+            ]}
+          />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg text-slate-900">Guest nights</CardTitle>
+          <CardDescription className="text-sm text-slate-600">
+            Daily guest nights across the window.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <TrendChart
+            variant="bar"
+            xKey="label"
+            data={data}
+            series={[
+              {
+                key: "guestNights",
+                name: "Guest nights",
+                color: FINANCE_SERIES_COLORS.accent,
+                valueType: "count",
+              },
+            ]}
+          />
+        </CardContent>
+      </Card>
+    </div>
   );
 }
 
@@ -474,6 +549,7 @@ export default async function FinanceBookingsPage({
       ) : (
         <>
           <SummarySection section={model.realized} icon={Database} />
+          <SectionCharts section={model.realized} />
           <DetailTables
             section={model.realized}
             dailyTable={<RealizedDailyTable rows={model.realized.dailyRows} />}
@@ -486,6 +562,7 @@ export default async function FinanceBookingsPage({
           />
 
           <SummarySection section={model.forward} icon={TrendingUp} />
+          <SectionCharts section={model.forward} />
           <DetailTables
             section={model.forward}
             dailyTable={<ForwardDailyTable rows={model.forward.dailyRows} />}

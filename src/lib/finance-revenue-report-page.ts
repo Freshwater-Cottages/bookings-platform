@@ -97,6 +97,11 @@ export interface FinanceRevenueReportLineItemRow {
   periodsPresent: string;
 }
 
+export interface FinanceRevenueReportChart {
+  monthly: Array<{ label: string; revenueCents: number }>;
+  mix: Array<{ name: string; valueCents: number }>;
+}
+
 export interface FinanceRevenueReportPageModel {
   generatedOn: string;
   isManager: boolean;
@@ -108,6 +113,7 @@ export interface FinanceRevenueReportPageModel {
   summaryCards: FinanceRevenueReportSummaryCard[];
   monthlyRows: FinanceRevenueReportMonthlyRow[];
   lineItemRows: FinanceRevenueReportLineItemRow[];
+  chart: FinanceRevenueReportChart;
   sourceNotes: Array<{
     label: string;
     description: string;
@@ -235,6 +241,20 @@ export async function buildFinanceRevenueReportPageModel(input: {
       totalRevenueCents / parsedSnapshots.length
     );
     const lineItemRows = buildRevenueLineItemRows(parsedSnapshots);
+    const chart: FinanceRevenueReportChart = {
+      monthly: [...parsedSnapshots]
+        .reverse()
+        .map((snapshot) => ({
+          label: snapshot.periodLabel,
+          revenueCents: snapshot.totalRevenueCents,
+        })),
+      mix: latestSnapshot.lineItems
+        .slice(0, 8)
+        .map((lineItem) => ({
+          name: lineItem.label,
+          valueCents: lineItem.amountCents,
+        })),
+    };
 
     return {
       generatedOn: formatDateTime(new Date().toISOString()),
@@ -242,6 +262,7 @@ export async function buildFinanceRevenueReportPageModel(input: {
       filters,
       reportHref,
       filterWarnings: warnings,
+      chart,
       coverageSummary: `Showing ${parsedSnapshots.length} monthly profit-and-loss snapshot${parsedSnapshots.length === 1 ? "" : "s"} from ${latestSnapshot.periodLabel} backwards.`,
       summaryCards: [
         {
@@ -316,6 +337,7 @@ function buildUnavailableRevenueReportModel(input: {
     summaryCards: [],
     monthlyRows: [],
     lineItemRows: [],
+    chart: { monthly: [], mix: [] },
     sourceNotes: buildRevenueSourceNotes(),
   };
 }
