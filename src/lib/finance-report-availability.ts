@@ -3,7 +3,7 @@ import {
   hasFinanceManagerAccess,
 } from "@/lib/finance-auth";
 import { getFinanceSyncDiagnosticsStatus } from "@/lib/finance-sync-diagnostics";
-import { getFinanceXeroRouteStatus } from "@/lib/finance-xero";
+import { isXeroConnected } from "@/lib/xero";
 
 interface FinanceReportAvailabilityInput {
   member: FinanceAccessMember;
@@ -18,18 +18,12 @@ function isManager(member: FinanceAccessMember): boolean {
 function buildMissingMessageFromStatus(
   input: FinanceReportAvailabilityInput,
   syncStatus: Awaited<ReturnType<typeof getFinanceSyncDiagnosticsStatus>>,
-  xeroStatus: Awaited<ReturnType<typeof getFinanceXeroRouteStatus>>
+  xeroConnected: boolean
 ): string {
-  if (!xeroStatus.canConnect) {
+  if (!xeroConnected) {
     return isManager(input.member)
-      ? `${input.reportTitle} is not ready yet because finance Xero setup is incomplete in this environment. Finish the finance Xero configuration, connect the finance organisation, and run the first sync.`
-      : `${input.reportTitle} is not ready yet because finance setup is still being completed. Ask a finance manager to finish the finance Xero connection and first sync.`;
-  }
-
-  if (!xeroStatus.connected) {
-    return isManager(input.member)
-      ? `${input.reportTitle} is waiting for the finance Xero connection. Connect the finance organisation, then run the first sync to load ${input.dataLabel}.`
-      : `${input.reportTitle} is waiting for its first finance sync. Ask a finance manager to connect finance Xero and run the first sync.`;
+      ? `${input.reportTitle} is waiting for the Xero connection. Connect Xero from the admin Xero page, then run the first finance sync to load ${input.dataLabel}.`
+      : `${input.reportTitle} is waiting for its first finance sync. Ask an administrator to connect Xero and run the first finance sync.`;
   }
 
   if (!syncStatus.latestRun) {
@@ -63,12 +57,12 @@ export async function buildFinanceSnapshotMissingMessage(
   input: FinanceReportAvailabilityInput
 ): Promise<string> {
   try {
-    const [syncStatus, xeroStatus] = await Promise.all([
+    const [syncStatus, xeroConnected] = await Promise.all([
       getFinanceSyncDiagnosticsStatus(),
-      getFinanceXeroRouteStatus(),
+      isXeroConnected(),
     ]);
 
-    return buildMissingMessageFromStatus(input, syncStatus, xeroStatus);
+    return buildMissingMessageFromStatus(input, syncStatus, xeroConnected);
   } catch {
     return `The setup status for ${input.reportTitle} could not be checked right now. Try again shortly.`;
   }
@@ -78,13 +72,13 @@ export async function buildFinanceSnapshotLoadErrorMessage(
   input: FinanceReportAvailabilityInput
 ): Promise<string> {
   try {
-    const [syncStatus, xeroStatus] = await Promise.all([
+    const [syncStatus, xeroConnected] = await Promise.all([
       getFinanceSyncDiagnosticsStatus(),
-      getFinanceXeroRouteStatus(),
+      isXeroConnected(),
     ]);
 
-    if (!xeroStatus.canConnect || !xeroStatus.connected || !syncStatus.latestRun) {
-      return buildMissingMessageFromStatus(input, syncStatus, xeroStatus);
+    if (!xeroConnected || !syncStatus.latestRun) {
+      return buildMissingMessageFromStatus(input, syncStatus, xeroConnected);
     }
 
     if (syncStatus.latestRun.status === "FAILED") {
@@ -97,6 +91,6 @@ export async function buildFinanceSnapshotLoadErrorMessage(
   }
 
   return isManager(input.member)
-    ? `${input.reportTitle} could not read its stored finance data right now. Try again shortly, then check finance connection and diagnostics if the problem continues.`
+    ? `${input.reportTitle} could not read its stored finance data right now. Try again shortly, then check the Xero connection and finance diagnostics if the problem continues.`
     : `${input.reportTitle} could not be loaded right now. Try again shortly.`;
 }

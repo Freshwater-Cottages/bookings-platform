@@ -3,19 +3,6 @@ function readEnv(name: string): string | undefined {
   return value ? value : undefined;
 }
 
-function isValidHttpUrl(value: string): boolean {
-  try {
-    const url = new URL(value);
-    return url.protocol === "http:" || url.protocol === "https:";
-  } catch {
-    return false;
-  }
-}
-
-function isValidHexEncryptionKey(value: string): boolean {
-  return /^[0-9a-fA-F]{64}$/.test(value);
-}
-
 const OPERATIONAL_XERO_OAUTH_SCOPES = [
   "openid",
   "profile",
@@ -24,18 +11,15 @@ const OPERATIONAL_XERO_OAUTH_SCOPES = [
   "accounting.invoices",
   "accounting.payments",
   "accounting.settings.read",
-  "offline_access",
-] as const;
-
-const FINANCE_XERO_OAUTH_SCOPES = [
-  ...OPERATIONAL_XERO_OAUTH_SCOPES,
+  // Required by the finance dashboard sync (profit & loss, balance sheet, bank
+  // summary reports). Existing tokens keep their old scopes until Xero is
+  // reconnected from the admin panel, so a one-time re-consent is needed.
   "accounting.reports.read",
+  "offline_access",
 ] as const;
 
 const DEFAULT_OPERATIONAL_XERO_REDIRECT_URI =
   "http://localhost:3000/api/admin/xero/callback";
-const DEFAULT_FINANCE_XERO_REDIRECT_URI =
-  "http://localhost:3000/api/finance/xero/callback";
 
 interface XeroClientConfigOptions {
   clientIdEnv: string;
@@ -72,61 +56,4 @@ export function getOperationalXeroConfig() {
 
 export function getOperationalXeroEncryptionKey(): string | undefined {
   return readEnv("XERO_ENCRYPTION_KEY");
-}
-
-export function getFinanceXeroConfig() {
-  return buildXeroClientConfig({
-    clientIdEnv: "FINANCE_XERO_CLIENT_ID",
-    clientSecretEnv: "FINANCE_XERO_CLIENT_SECRET",
-    redirectUriEnv: "FINANCE_XERO_REDIRECT_URI",
-    defaultRedirectUri: DEFAULT_FINANCE_XERO_REDIRECT_URI,
-    scopes: FINANCE_XERO_OAUTH_SCOPES,
-  });
-}
-
-export function getFinanceXeroConfigIssues(): string[] {
-  const issues: string[] = [];
-
-  if (!readEnv("FINANCE_XERO_CLIENT_ID")) {
-    issues.push("FINANCE_XERO_CLIENT_ID is required");
-  }
-
-  if (!readEnv("FINANCE_XERO_CLIENT_SECRET")) {
-    issues.push("FINANCE_XERO_CLIENT_SECRET is required");
-  }
-
-  const redirectUri = readEnv("FINANCE_XERO_REDIRECT_URI");
-  if (redirectUri && !isValidHttpUrl(redirectUri)) {
-    issues.push("FINANCE_XERO_REDIRECT_URI must be a valid http(s) URL");
-  }
-
-  return issues;
-}
-
-export function hasFinanceXeroConfig(): boolean {
-  return getFinanceXeroConfigIssues().length === 0;
-}
-
-export function getFinanceXeroEncryptionKey(): string | undefined {
-  return readEnv("FINANCE_XERO_ENCRYPTION_KEY");
-}
-
-export function getFinanceXeroTokenStorageIssues(): string[] {
-  const issues: string[] = [];
-  const encryptionKey = getFinanceXeroEncryptionKey();
-
-  if (!encryptionKey) {
-    issues.push("FINANCE_XERO_ENCRYPTION_KEY is required");
-    return issues;
-  }
-
-  if (!isValidHexEncryptionKey(encryptionKey)) {
-    issues.push("FINANCE_XERO_ENCRYPTION_KEY must be a 64-character hex string (32 bytes)");
-  }
-
-  return issues;
-}
-
-export function hasFinanceXeroTokenStorageConfig(): boolean {
-  return getFinanceXeroTokenStorageIssues().length === 0;
 }

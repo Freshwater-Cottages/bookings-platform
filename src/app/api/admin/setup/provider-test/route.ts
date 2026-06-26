@@ -8,7 +8,7 @@ import { getStripe } from "@/lib/stripe";
 import { resolveEmailDeliveryConfig } from "@/lib/email-delivery";
 
 const providerTestSchema = z.object({
-  provider: z.enum(["stripe", "smtp", "sentry", "xero", "finance-xero"]),
+  provider: z.enum(["stripe", "smtp", "sentry", "xero"]),
 });
 
 type Provider = z.infer<typeof providerTestSchema>["provider"];
@@ -87,20 +87,6 @@ async function testOperationalXero() {
   return `Operational Xero token is active for tenant ${token.tenantId ?? "unknown"}.`;
 }
 
-async function testFinanceXero() {
-  const token = await prisma.financeXeroToken.findFirst({
-    orderBy: { updatedAt: "desc" },
-    select: { expiresAt: true, tenantId: true },
-  });
-  if (!token) {
-    throw new Error("Finance Xero is not connected");
-  }
-  if (token.expiresAt <= new Date()) {
-    throw new Error("Finance Xero token is expired");
-  }
-  return `Finance Xero token is active for tenant ${token.tenantId ?? "unknown"}.`;
-}
-
 async function runProviderTest(provider: Provider) {
   switch (provider) {
     case "stripe":
@@ -111,8 +97,6 @@ async function runProviderTest(provider: Provider) {
       return testSentry();
     case "xero":
       return testOperationalXero();
-    case "finance-xero":
-      return testFinanceXero();
   }
 }
 

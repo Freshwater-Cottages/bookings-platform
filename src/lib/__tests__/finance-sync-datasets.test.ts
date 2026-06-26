@@ -12,31 +12,11 @@ const SECTION = "Section" as never;
 const ROW = "Row" as never;
 const SUMMARY_ROW = "SummaryRow" as never;
 
-const { mockRecordFinanceXeroApiUsage } = vi.hoisted(() => ({
-  mockRecordFinanceXeroApiUsage: vi.fn(),
+const { mockCallXeroApi } = vi.hoisted(() => ({
+  mockCallXeroApi: vi.fn(),
 }));
-const { MockXeroDailyLimitError, mockCallXeroApi } = vi.hoisted(() => {
-  class TestXeroDailyLimitError extends Error {
-    retryAfterSec: number;
 
-    constructor(retryAfterSec: number) {
-      super(`Retry after ${retryAfterSec} seconds`);
-      this.name = "XeroDailyLimitError";
-      this.retryAfterSec = retryAfterSec;
-    }
-  }
-
-  return {
-    MockXeroDailyLimitError: TestXeroDailyLimitError,
-    mockCallXeroApi: vi.fn(),
-  };
-});
-
-vi.mock("@/lib/finance-xero-api-usage", () => ({
-  recordFinanceXeroApiUsage: mockRecordFinanceXeroApiUsage,
-}));
 vi.mock("@/lib/xero", () => ({
-  XeroDailyLimitError: MockXeroDailyLimitError,
   callXeroApi: (fn: () => unknown, options: unknown) =>
     mockCallXeroApi(fn, options),
 }));
@@ -1220,57 +1200,6 @@ describe("finance-sync-datasets", () => {
         contactCount: 1,
       },
     });
-    expect(mockRecordFinanceXeroApiUsage).toHaveBeenCalledTimes(5);
-  });
-
-  it("records finance Xero rate-limit metadata when a retried call eventually succeeds", async () => {
-    const context = createFinanceSyncContext();
-    context.xero.accountingApi.getReportBalanceSheet.mockResolvedValue({
-      body: { reports: [createReport({ reportID: "bs-1", reportName: "Balance Sheet" })] },
-    });
-
-    mockCallXeroApi.mockImplementation(async (fn: () => unknown, options: any) => {
-      options.onRateLimit?.({
-        attempt: 1,
-        retryAfterSec: 30,
-        rateLimitCategory: "minute",
-      });
-      return fn();
-    });
-
-    await syncFinanceBalanceSheetSnapshot(context as never);
-
-    expect(mockRecordFinanceXeroApiUsage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        operation: "getReportBalanceSheet",
-        resourceType: "REPORT",
-        workflow: "daily-finance-sync",
-        success: true,
-        rateLimitCategory: "minute",
-      })
-    );
-  });
-
-  it("classifies daily limit cooldown failures for finance usage metering", async () => {
-    const context = createFinanceSyncContext();
-    const error = new MockXeroDailyLimitError(3600);
-
-    context.xero.accountingApi.getReportBalanceSheet.mockRejectedValue(error);
-
-    await expect(
-      syncFinanceBalanceSheetSnapshot(context as never)
-    ).rejects.toEqual(error);
-
-    expect(mockRecordFinanceXeroApiUsage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        operation: "getReportBalanceSheet",
-        resourceType: "REPORT",
-        workflow: "daily-finance-sync",
-        success: false,
-        rateLimitCategory: "day",
-        errorMessage: "Retry after 3600 seconds",
-      })
-    );
   });
 
   it("rewrites insufficient-scope report failures into reconnect guidance", async () => {
@@ -1290,19 +1219,7 @@ describe("finance-sync-datasets", () => {
     await expect(
       syncFinanceBankBalancesSnapshot(context as never)
     ).rejects.toThrow(
-      "Finance Xero is missing a required OAuth scope for getReportBankSummary. Add accounting.reports.read to the finance Xero app and reconnect finance Xero."
-    );
-
-    expect(mockRecordFinanceXeroApiUsage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        operation: "getReportBankSummary",
-        resourceType: "REPORT",
-        workflow: "daily-finance-sync",
-        success: false,
-        statusCode: 401,
-        errorMessage:
-          "Finance Xero is missing a required OAuth scope for getReportBankSummary. Add accounting.reports.read to the finance Xero app and reconnect finance Xero.",
-      })
+      "Xero is missing a required OAuth scope for getReportBankSummary. Add accounting.reports.read to the Xero app and reconnect Xero from the admin panel."
     );
   });
 });

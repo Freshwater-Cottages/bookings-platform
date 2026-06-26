@@ -14,7 +14,6 @@ import {
   getFinanceSyncDiagnosticsStatus,
   type FinanceSyncDiagnosticsStatus,
 } from "@/lib/finance-sync-diagnostics";
-import { getFinanceXeroRouteStatus } from "@/lib/finance-xero";
 import { formatCents } from "@/lib/utils";
 
 const FINANCE_TIMEZONE = APP_TIME_ZONE;
@@ -51,7 +50,7 @@ export interface FinanceLandingSectionLink {
 }
 
 export interface FinanceLandingManagerAction {
-  kind: "link" | "connect" | "disconnect" | "sync";
+  kind: "link" | "sync";
   href?: string;
   label: string;
   description: string;
@@ -63,12 +62,8 @@ export interface FinanceLandingManagerWorkspace {
   description: string;
   badgeLabel: string;
   badgeVariant: BadgeProps["variant"];
-  cards: FinanceLandingMetricCard[];
-  configIssues: string[];
-  tokenStorageIssues: string[];
   actions: FinanceLandingManagerAction[];
   technicalActions: FinanceLandingManagerAction[];
-  error?: string;
 }
 
 export interface FinanceLandingPageModel {
@@ -146,10 +141,9 @@ export async function buildFinanceLandingPageModel(input: {
   const { member } = input;
   const isManager = hasFinanceManagerAccess(member.financeAccessLevel);
   const { query, windows } = buildFinanceLandingMetricsQuery(input.today);
-  const [syncResult, bookingResult, xeroResult] = await Promise.allSettled([
+  const [syncResult, bookingResult] = await Promise.allSettled([
     getFinanceSyncDiagnosticsStatus(),
     getFinanceBookingMetrics(query),
-    isManager ? getFinanceXeroRouteStatus() : Promise.resolve(null),
   ]);
 
   const sync = mapSyncSection(syncResult);
@@ -193,196 +187,50 @@ export async function buildFinanceLandingPageModel(input: {
       ...(isManager
         ? [
             {
-              label: "Finance Xero connection",
+              label: "Xero reporting data",
               description:
-                "Finance reporting uses its own Xero connection so it stays separate from the operational Xero setup.",
+                "Revenue, costs, and balance figures come from the single Xero connection shared with bookings, payments, and subscriptions. Manage it from the admin Xero page.",
             },
           ]
         : []),
     ],
-    managerWorkspace: isManager
-      ? mapManagerWorkspace(
-          xeroResult as PromiseSettledResult<
-            Awaited<ReturnType<typeof getFinanceXeroRouteStatus>> | null
-          >
-        )
-      : null,
+    managerWorkspace: isManager ? buildFinanceManagerWorkspace() : null,
   };
 }
 
-function mapManagerWorkspace(
-  result: PromiseSettledResult<
-    Awaited<ReturnType<typeof getFinanceXeroRouteStatus>> | null
-  >
-): FinanceLandingManagerWorkspace {
-  const technicalActions: FinanceLandingManagerAction[] = [
-    {
-      kind: "link",
-      href: "/api/finance/sync/status",
-      label: "Open sync diagnostics JSON",
-      description:
-        "Technical detail for the latest finance sync and recent failures.",
-    },
-    {
-      kind: "link",
-      href: "/api/finance/xero/status",
-      label: "Open Xero status JSON",
-      description:
-        "Technical detail for the finance reporting Xero connection.",
-    },
-  ];
-
-  if (result.status === "rejected") {
-    return {
-      eyebrow: "Manager access",
-      title: "Connection & diagnostics are temporarily unavailable",
-      description:
-        "The page could not load the finance Xero manager tools right now.",
-      badgeLabel: "Unavailable",
-      badgeVariant: "destructive",
-      cards: [],
-      configIssues: [],
-      tokenStorageIssues: [],
-      actions: [],
-      technicalActions,
-      error: readErrorMessage({
-        reason: result.reason,
-        fallback: "Finance Xero manager tools are temporarily unavailable.",
-        logContext:
-          "Failed to load finance Xero status for the landing page manager workspace",
-      }),
-    };
-  }
-
-  const status = result.value;
-  if (!status) {
-    return {
-      eyebrow: "Manager access",
-      title: "Connection & diagnostics",
-      description:
-        "Connection and setup tools are only shown to finance managers.",
-      badgeLabel: "Hidden",
-      badgeVariant: "secondary",
-      cards: [],
-      configIssues: [],
-      tokenStorageIssues: [],
-      actions: [],
-      technicalActions: [],
-    };
-  }
-
-  const reconnectRequired = status.hasStoredTokens && !status.connected;
-  const badgeVariant = status.connected
-    ? "success"
-    : !status.canConnect
-      ? "destructive"
-      : reconnectRequired
-        ? "warning"
-        : status.canConnect
-      ? "warning"
-      : "destructive";
-  const badgeLabel = status.connected
-    ? "Connected"
-    : !status.canConnect
-      ? "Setup required"
-      : reconnectRequired
-        ? "Reconnect required"
-        : "Connection needed";
-  const connectionActions: FinanceLandingManagerAction[] = status.connected
-    ? [
-        {
-          kind: "sync",
-          href: "/api/finance/sync/run",
-          label: "Run finance sync now",
-          description:
-            "Trigger a manager-started sync now instead of waiting for the next scheduled cycle.",
-        },
-        {
-          kind: "connect",
-          href: "/api/finance/xero/connect",
-          label: "Reconnect finance Xero",
-          description:
-            "Start the Xero sign-in flow again if the finance connection needs refreshing.",
-        },
-        {
-          kind: "disconnect",
-          label: "Disconnect finance Xero",
-          description:
-            "Clear the saved finance tokens and revoke them in Xero when possible.",
-        },
-      ]
-      : status.canConnect
-      ? [
-          {
-            kind: "connect",
-            href: "/api/finance/xero/connect",
-            label: "Connect finance Xero",
-            description:
-              "Sign in to Xero so finance sync can store fresh reporting data.",
-          },
-        ]
-      : [];
-
+function buildFinanceManagerWorkspace(): FinanceLandingManagerWorkspace {
   return {
     eyebrow: "Manager access",
-    title: "Connection & diagnostics",
-    description: status.connected
-      ? "Finance Xero is connected and ready for scheduled or manual syncs."
-      : !status.canConnect
-        ? "This environment is missing required finance Xero setup."
-        : reconnectRequired
-          ? "A saved finance token needs to be reconnected before sync can run reliably."
-          : "This environment is ready, but finance Xero has not been connected yet.",
-    badgeLabel,
-    badgeVariant,
-    cards: [
+    title: "Finance data & connection",
+    description:
+      "Finance reports read from the single Xero connection shared with bookings, payments, and subscriptions. Run a manual sync after large changes, or manage the connection from the admin Xero page.",
+    badgeLabel: "Manager tools",
+    badgeVariant: "secondary",
+    actions: [
       {
-        title: "Finance Xero",
-        value: status.connected
-          ? "Connected"
-          : !status.canConnect
-            ? "Setup required"
-            : reconnectRequired
-              ? "Reconnect needed"
-              : "Not connected",
-        description: status.connected
-          ? "Finance reporting is connected to its own saved Xero organisation."
-          : !status.canConnect
-            ? "Finish the finance Xero setup before trying to connect."
-            : reconnectRequired
-              ? "Reconnect finance Xero so the saved connection has a valid organisation again."
-              : "Connect finance Xero before relying on synced finance data.",
-        footnote: status.connected
-          ? buildConnectionFootnote(status.tenantId, status.tokenExpiresAt)
-          : reconnectRequired
-            ? "A saved token exists, but the finance organisation is missing from the connection."
-            : "No finance Xero connection has been saved in this environment yet.",
+        kind: "sync",
+        href: "/api/finance/sync/run",
+        label: "Run finance sync now",
+        description:
+          "Trigger a manager-started sync now instead of waiting for the next scheduled cycle.",
       },
       {
-        title: "Finance app setup",
-        value: status.oauthConfigured ? "Ready" : "Action required",
-        description: status.oauthConfigured
-          ? "Finance Xero credentials and callback settings are configured."
-          : "Finance Xero credentials or callback settings still need to be fixed.",
-        footnote: status.configIssues.length
-          ? formatIssueList(status.configIssues)
-          : "No finance app configuration issues detected.",
-      },
-      {
-        title: "Token storage",
-        value: status.tokenStorageConfigured ? "Ready" : "Action required",
-        description: status.tokenStorageConfigured
-          ? "Encrypted storage for finance Xero tokens is configured."
-          : "Finance token encryption must be fixed before Xero tokens can be saved.",
-        footnote: status.tokenStorageIssues.length
-          ? formatIssueList(status.tokenStorageIssues)
-          : "No finance token-storage issues detected.",
+        kind: "link",
+        href: "/admin/xero",
+        label: "Manage Xero connection",
+        description:
+          "Connect, reconnect, or review the shared Xero connection from the admin Xero page.",
       },
     ],
-    configIssues: status.configIssues,
-    tokenStorageIssues: status.tokenStorageIssues,
-    actions: connectionActions,
-    technicalActions,
+    technicalActions: [
+      {
+        kind: "link",
+        href: "/api/finance/sync/status",
+        label: "Open sync diagnostics JSON",
+        description:
+          "Technical detail for the latest finance sync and recent failures.",
+      },
+    ],
   };
 }
 
@@ -692,29 +540,6 @@ function formatPercent(value: number): string {
     minimumFractionDigits: 1,
     maximumFractionDigits: 1,
   }).format(value);
-}
-
-function buildConnectionFootnote(
-  tenantId: string | null,
-  tokenExpiresAt: Date | null
-): string {
-  const details: string[] = [];
-
-  if (tenantId) {
-    details.push(`Tenant ${tenantId}.`);
-  }
-
-  if (tokenExpiresAt) {
-    details.push(`Token expires ${formatDateTime(tokenExpiresAt.toISOString())}.`);
-  }
-
-  return details.length > 0
-    ? details.join(" ")
-    : "Connected without a stored tenant or expiry detail.";
-}
-
-function formatIssueList(issues: string[]): string {
-  return issues.join(" ");
 }
 
 function readErrorMessage(input: {

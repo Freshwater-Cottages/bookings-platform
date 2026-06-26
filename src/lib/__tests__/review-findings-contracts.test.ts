@@ -265,18 +265,6 @@ describe("review finding source/schema contracts", () => {
     expect(expireStaleOffersBlock).toContain("pg_advisory_xact_lock");
   });
 
-  it("adds rotation-aware metadata for finance Xero token encryption", () => {
-    const schema = readRepoFile("prisma/schema.prisma");
-    const tokenStore = readRepoFile("src/lib/finance-xero-token-store.ts");
-
-    expect(`${schema}\n${tokenStore}`).toMatch(
-      /keyVersion|keyId|encryptionKeyVersion/
-    );
-    expect(tokenStore).toMatch(
-      /previousKey|oldKey|candidateKeys|decryptWith|fallback/i
-    );
-  });
-
   it("adds SES bounce and complaint ingestion instead of retry-only email recovery", () => {
     const emailCronSource = readRepoFile("src/lib/cron-email-retry.ts");
     const emailSource = readRepoFile("src/lib/email.ts");

@@ -19,7 +19,6 @@ async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot> {
     groupDiscount,
     membershipCancellationSettings,
     operationalXeroToken,
-    financeXeroToken,
     xeroAccountMappingCount,
     xeroHutFeeItemMappingCount,
     xeroEntranceFeeMappingCount,
@@ -63,10 +62,6 @@ async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot> {
       orderBy: { updatedAt: "desc" },
       select: { expiresAt: true },
     }),
-    prisma.financeXeroToken.findFirst({
-      orderBy: { updatedAt: "desc" },
-      select: { expiresAt: true },
-    }),
     prisma.xeroAccountMapping.count({
       where: {
         OR: [{ code: { not: null } }, { itemCode: { not: null } }],
@@ -105,10 +100,6 @@ async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot> {
     ),
     operationalXeroTokenExpiresAt:
       operationalXeroToken?.expiresAt.toISOString() ?? null,
-    financeXeroConnected: Boolean(
-      financeXeroToken && financeXeroToken.expiresAt > now,
-    ),
-    financeXeroTokenExpiresAt: financeXeroToken?.expiresAt.toISOString() ?? null,
     xeroAccountMappingCount,
     xeroHutFeeItemMappingCount,
     xeroEntranceFeeMappingCount,

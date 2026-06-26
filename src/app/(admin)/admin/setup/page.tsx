@@ -25,7 +25,7 @@ import {
 
 type SetupStatus = "complete" | "warning" | "blocked" | "not_started";
 type ProgressStatus = "open" | "completed" | "skipped";
-type Provider = "stripe" | "smtp" | "sentry" | "xero" | "finance-xero";
+type Provider = "stripe" | "smtp" | "sentry" | "xero";
 
 interface SetupStepCheck {
   id: string;

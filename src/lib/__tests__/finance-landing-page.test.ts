@@ -4,11 +4,9 @@ import { parseDateOnly } from "@/lib/date-only";
 const {
   mockGetFinanceSyncDiagnosticsStatus,
   mockGetFinanceBookingMetrics,
-  mockGetFinanceXeroRouteStatus,
 } = vi.hoisted(() => ({
   mockGetFinanceSyncDiagnosticsStatus: vi.fn(),
   mockGetFinanceBookingMetrics: vi.fn(),
-  mockGetFinanceXeroRouteStatus: vi.fn(),
 }));
 
 vi.mock("@/lib/finance-sync-diagnostics", () => ({
@@ -17,10 +15,6 @@ vi.mock("@/lib/finance-sync-diagnostics", () => ({
 
 vi.mock("@/lib/finance-booking-metrics", () => ({
   getFinanceBookingMetrics: mockGetFinanceBookingMetrics,
-}));
-
-vi.mock("@/lib/finance-xero", () => ({
-  getFinanceXeroRouteStatus: mockGetFinanceXeroRouteStatus,
 }));
 
 vi.mock("@/lib/finance-auth", () => ({
@@ -256,31 +250,6 @@ function bookingMetrics() {
   };
 }
 
-function financeXeroRouteStatus(overrides?: Partial<{
-  connected: boolean;
-  hasStoredTokens: boolean;
-  tenantId: string | null;
-  tokenExpiresAt: Date | null;
-  oauthConfigured: boolean;
-  tokenStorageConfigured: boolean;
-  canConnect: boolean;
-  configIssues: string[];
-  tokenStorageIssues: string[];
-}>) {
-  return {
-    connected: true,
-    hasStoredTokens: true,
-    tenantId: "finance-tenant-1",
-    tokenExpiresAt: new Date("2026-04-22T00:00:00.000Z"),
-    oauthConfigured: true,
-    tokenStorageConfigured: true,
-    canConnect: true,
-    configIssues: [],
-    tokenStorageIssues: [],
-    ...overrides,
-  };
-}
-
 describe("finance landing page model", () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -288,7 +257,6 @@ describe("finance landing page model", () => {
     vi.clearAllMocks();
     mockGetFinanceSyncDiagnosticsStatus.mockResolvedValue(diagnosticsStatus());
     mockGetFinanceBookingMetrics.mockResolvedValue(bookingMetrics());
-    mockGetFinanceXeroRouteStatus.mockResolvedValue(financeXeroRouteStatus());
   });
 
   afterEach(() => {
@@ -323,10 +291,8 @@ describe("finance landing page model", () => {
 
     expect(model.isManager).toBe(true);
     expect(model.managerWorkspace).toMatchObject({
-      badgeLabel: "Connected",
-      badgeVariant: "success",
-      configIssues: [],
-      tokenStorageIssues: [],
+      badgeLabel: "Manager tools",
+      badgeVariant: "secondary",
     });
     expect(
       model.managerWorkspace?.actions.map((action) => ({
@@ -339,20 +305,13 @@ describe("finance landing page model", () => {
         href: "/api/finance/sync/run",
       },
       {
-        kind: "connect",
-        href: "/api/finance/xero/connect",
-      },
-      {
-        kind: "disconnect",
-        href: null,
+        kind: "link",
+        href: "/admin/xero",
       },
     ]);
     expect(
       model.managerWorkspace?.technicalActions.map((action) => action.href ?? null)
-    ).toEqual([
-      "/api/finance/sync/status",
-      "/api/finance/xero/status",
-    ]);
+    ).toEqual(["/api/finance/sync/status"]);
     expect(model.sync.badgeLabel).toBe("Healthy");
     expect(model.realized.cards[0]).toMatchObject({
       title: "Guest nights",
@@ -374,70 +333,6 @@ describe("finance landing page model", () => {
     expect(model.isManager).toBe(false);
     expect(model.managerWorkspace).toBeNull();
     expect(model.sectionLinks).toHaveLength(3);
-    expect(mockGetFinanceXeroRouteStatus).not.toHaveBeenCalled();
-  });
-
-  it("shows a non-CTA badge label when finance Xero still needs first-time consent", async () => {
-    mockGetFinanceXeroRouteStatus.mockResolvedValue(
-      financeXeroRouteStatus({
-        connected: false,
-        hasStoredTokens: false,
-        tenantId: null,
-        tokenExpiresAt: null,
-      })
-    );
-
-    const model = await buildFinanceLandingPageModel({
-      member: financeManager(),
-      today: parseDateOnly("2026-04-21"),
-    });
-
-    expect(model.managerWorkspace).toMatchObject({
-      badgeLabel: "Connection needed",
-      badgeVariant: "warning",
-    });
-    expect(model.managerWorkspace?.actions).toMatchObject([
-      {
-        kind: "connect",
-        href: "/api/finance/xero/connect",
-        label: "Connect finance Xero",
-      },
-    ]);
-  });
-
-  it("surfaces finance Xero configuration blockers for managers", async () => {
-    mockGetFinanceXeroRouteStatus.mockResolvedValue(
-      financeXeroRouteStatus({
-        connected: false,
-        hasStoredTokens: false,
-        tenantId: null,
-        tokenExpiresAt: null,
-        oauthConfigured: false,
-        tokenStorageConfigured: false,
-        canConnect: false,
-        configIssues: ["FINANCE_XERO_CLIENT_ID is required"],
-        tokenStorageIssues: [
-          "FINANCE_XERO_ENCRYPTION_KEY is required",
-        ],
-      })
-    );
-
-    const model = await buildFinanceLandingPageModel({
-      member: financeManager(),
-      today: parseDateOnly("2026-04-21"),
-    });
-
-    expect(model.managerWorkspace).toMatchObject({
-      badgeLabel: "Setup required",
-      badgeVariant: "destructive",
-      configIssues: ["FINANCE_XERO_CLIENT_ID is required"],
-      tokenStorageIssues: ["FINANCE_XERO_ENCRYPTION_KEY is required"],
-    });
-    expect(
-      model.managerWorkspace?.actions.some(
-        (action) => action.kind === "connect"
-      )
-    ).toBe(false);
   });
 
   it("keeps the sync section live when booking metrics fail", async () => {

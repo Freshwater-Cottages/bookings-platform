@@ -77,10 +77,11 @@ Minimum production categories:
   its `.env` capability and Admin Modules activation are both enabled.
 - Stripe: `STRIPE_SECRET_KEY`, `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`,
   `STRIPE_WEBHOOK_SECRET`
-- Operational Xero: `XERO_CLIENT_ID`, `XERO_CLIENT_SECRET`,
-  `XERO_REDIRECT_URI`, `XERO_ENCRYPTION_KEY`, optional `XERO_WEBHOOK_KEY`
-- Finance Xero: `FINANCE_XERO_CLIENT_ID`, `FINANCE_XERO_CLIENT_SECRET`,
-  `FINANCE_XERO_REDIRECT_URI`, `FINANCE_XERO_ENCRYPTION_KEY`
+- Xero: `XERO_CLIENT_ID`, `XERO_CLIENT_SECRET`, `XERO_REDIRECT_URI`,
+  `XERO_ENCRYPTION_KEY`, optional `XERO_WEBHOOK_KEY`. This single connection
+  serves bookings, payments, subscriptions, and the finance dashboard. The
+  finance reports need the `accounting.reports.read` scope, so reconnect Xero
+  from `/admin/xero` after deploying this change.
 - Email: `SMTP_HOST`, `SMTP_PORT`, `AWS_SES_ACCESS_KEY_ID`,
   `AWS_SES_SECRET_ACCESS_KEY`, `EMAIL_FROM`, `SES_SNS_TOPIC_ARN`
 - Cron and backups: `CRON_SECRET`, `BACKUP_*`, optional

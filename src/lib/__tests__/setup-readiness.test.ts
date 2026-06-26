@@ -42,10 +42,6 @@ const baseEnv = {
   XERO_REDIRECT_URI: "https://club.example.org/api/admin/xero/callback",
   XERO_ENCRYPTION_KEY: "a".repeat(64),
   XERO_WEBHOOK_KEY: "webhook-key",
-  FINANCE_XERO_CLIENT_ID: "finance-client",
-  FINANCE_XERO_CLIENT_SECRET: "finance-secret",
-  FINANCE_XERO_REDIRECT_URI: "https://club.example.org/api/finance/xero/callback",
-  FINANCE_XERO_ENCRYPTION_KEY: "b".repeat(64),
 };
 
 const completeDatabase: SetupDatabaseSnapshot = {
@@ -69,8 +65,6 @@ const completeDatabase: SetupDatabaseSnapshot = {
   membershipCancellationArchiveContacts: false,
   operationalXeroConnected: true,
   operationalXeroTokenExpiresAt: "2026-06-01T00:00:00.000Z",
-  financeXeroConnected: true,
-  financeXeroTokenExpiresAt: "2026-06-01T00:00:00.000Z",
   xeroAccountMappingCount: 5,
   xeroHutFeeItemMappingCount: 16,
   xeroEntranceFeeMappingCount: 4,
@@ -195,7 +189,6 @@ describe("setup-readiness", () => {
           financeDashboard: false,
         },
         operationalXeroConnected: false,
-        financeXeroConnected: false,
       },
     });
 
@@ -221,8 +214,6 @@ describe("setup-readiness", () => {
         ...completeDatabase,
         operationalXeroConnected: false,
         operationalXeroTokenExpiresAt: null,
-        financeXeroConnected: false,
-        financeXeroTokenExpiresAt: null,
       },
       progress: {
         completedStepIds: [...SETUP_STEP_IDS],
