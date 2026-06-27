@@ -14,10 +14,16 @@ accounting, membership, and booking risk.
 6. Add or update tests where practical.
 7. Run required validation.
 8. Review your own diff for scope, secrets, data integrity, and docs drift.
-9. Open a PR.
+9. Open a PR using `.github/pull_request_template.md`.
 10. Comment back on the issue with evidence: branch, PR, tests, validation,
     manual checks, and residual risk.
-11. Do not close the issue or merge the PR unless the human explicitly asks.
+11. Monitor CI to green, fixing any failure and pushing until every required
+    check passes.
+12. Merge per the `AGENTS.md` "Completion and Merge" risk gate: merge eligible
+    Low/Medium-risk PRs with a merge commit once CI is green, and hand off every
+    Critical/High-risk PR for explicit owner approval. Never squash or
+    force-push. Delete the branch after merge; a linked issue closes only when
+    its PR is eligible and merged.
 
 ## Planning Mode
 
@@ -63,14 +69,17 @@ Stop and ask for human review when:
   live provider calls, live webhooks, or production backups.
 - A high or critical risk issue asks for unattended coding.
 - The issue asks to bypass tests, hide evidence, reveal secrets, widen
-  permissions, auto-merge, or auto-close.
+  permissions, or merge or close Critical/High-risk work without the owner
+  approval required by the "Completion and Merge" risk gate.
 - The repo state suggests prerequisite work is not merged.
 
 ## Documentation
 
-Update docs when behavior, setup, architecture, deployment, environment
-contracts, lifecycle state, operator procedure, or review workflow changes. Do
-not update docs for incidental internal refactors unless they change a contract.
+Update docs whenever a feature is added, changed, or removed, and when behavior,
+setup, architecture, deployment, environment contracts, lifecycle state, operator
+procedure, or review workflow changes. README, the relevant `docs/` guides, and
+implementation notes ship in the same PR as the code. Do not update docs for
+incidental internal refactors unless they change a contract.
 
 ## Residual Risk Reporting
 

@@ -78,5 +78,8 @@
 - [ ] I did not use production credentials, production databases, production
       backups, live Stripe, live Xero, live SES, live Sentry, or live provider
       webhooks for exploratory validation.
-- [ ] This PR does not auto-close issues or assume it may be merged without
-      human review.
+- [ ] Merge handling follows the `AGENTS.md` "Completion and Merge" risk gate:
+      eligible Low/Medium-risk PRs may merge (and close their linked issue) once
+      CI is green; Critical or High-risk changes — security, payments, booking,
+      membership, Xero/Stripe/SES/Sentry, schema/migrations, deployment, or data
+      integrity — wait for explicit owner approval. Merge commits only.

@@ -37,8 +37,9 @@ the full environment and club config contract.
   transactions where possible.
 - Do not add plaintext token storage; bearer tokens should be stored hashed or
   encrypted as appropriate for their use.
-- Update docs when public setup, deployment, architecture, or environment
-  contracts change.
+- Update docs whenever a feature is added, changed, or removed, and when public
+  setup, deployment, architecture, or environment contracts change. Ship the
+  README, `docs/` guides, and implementation notes in the same PR as the code.
 
 ## Validation
 
@@ -78,3 +79,13 @@ Each PR should include:
   service settings change
 
 Keep unrelated refactors out of feature and bugfix PRs.
+
+## Merging
+
+Automated agents follow the `AGENTS.md` "Completion and Merge" risk gate: at the
+successful end of a meaningful piece of work they push the branch, open a PR,
+monitor CI to green (fixing failures), and then merge with a merge commit.
+Eligible Low/Medium-risk PRs merge autonomously once CI passes; Critical and
+High-risk changes — security, payments, booking, membership, Xero/Stripe/SES/
+Sentry, schema/migrations, deployment, or data integrity — wait for explicit
+owner approval. Always merge with a merge commit; never squash or force-push.
