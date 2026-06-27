@@ -285,17 +285,15 @@ changes the database-backed settings.
 | `XERO_ENABLE_AUTOLOAD_XERO_CONTACT_GROUPS` | Enables automatic Xero contact-group loading.                          |
 | `XERO_INBOUND_FAILED_RETRY_BACKOFF_MS`     | Optional retry backoff for failed inbound Xero reconciliation.         |
 
-## Finance Xero
+## Finance dashboard
 
-| Variable                               | Description                                               |
-| -------------------------------------- | --------------------------------------------------------- |
-| `FINANCE_XERO_CLIENT_ID`               | Finance-only Xero OAuth client id.                        |
-| `FINANCE_XERO_CLIENT_SECRET`           | Finance-only Xero OAuth client secret.                    |
-| `FINANCE_XERO_REDIRECT_URI`            | Must match the deployed `/api/finance/xero/callback` URL. |
-| `FINANCE_XERO_ENCRYPTION_KEY`          | 64-character hex key for finance token storage.           |
-| `FINANCE_XERO_ENCRYPTION_KEY_VERSION`  | Active finance token key version.                         |
-| `FINANCE_XERO_ENCRYPTION_KEY_PREVIOUS` | Previous finance token key during rotation.               |
-| `FINANCE_XERO_PREVIOUS_ENCRYPTION_KEY` | Backward-compatible alias for the previous finance key.   |
+The finance dashboard reads its revenue, cost, and balance figures from the
+single operational Xero connection configured above. There are no separate
+finance Xero credentials. The finance reports require the
+`accounting.reports.read` OAuth scope, which is included in the operational
+scope set, so reconnect Xero from `/admin/xero` after deploying so the scope is
+granted. Access is controlled per member by `financeAccessLevel`
+(`NONE`/`VIEWER`/`MANAGER`).
 
 ## Email Delivery
 

@@ -2,10 +2,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
   mockGetFinanceSyncDiagnosticsStatus,
-  mockGetFinanceXeroRouteStatus,
+  mockIsXeroConnected,
 } = vi.hoisted(() => ({
   mockGetFinanceSyncDiagnosticsStatus: vi.fn(),
-  mockGetFinanceXeroRouteStatus: vi.fn(),
+  mockIsXeroConnected: vi.fn(),
 }));
 
 vi.mock("@/lib/finance-auth", () => ({
@@ -16,8 +16,8 @@ vi.mock("@/lib/finance-sync-diagnostics", () => ({
   getFinanceSyncDiagnosticsStatus: mockGetFinanceSyncDiagnosticsStatus,
 }));
 
-vi.mock("@/lib/finance-xero", () => ({
-  getFinanceXeroRouteStatus: mockGetFinanceXeroRouteStatus,
+vi.mock("@/lib/xero", () => ({
+  isXeroConnected: mockIsXeroConnected,
 }));
 
 import {
@@ -68,39 +68,17 @@ describe("finance report availability messaging", () => {
         cronRuns: [],
       },
     });
-    mockGetFinanceXeroRouteStatus.mockResolvedValue({
-      connected: false,
-      hasStoredTokens: false,
-      tenantId: null,
-      tokenExpiresAt: null,
-      oauthConfigured: true,
-      tokenStorageConfigured: true,
-      canConnect: true,
-      configIssues: [],
-      tokenStorageIssues: [],
-    });
+    mockIsXeroConnected.mockResolvedValue(false);
   });
 
-  it("tells managers when finance setup is incomplete", async () => {
-    mockGetFinanceXeroRouteStatus.mockResolvedValue({
-      connected: false,
-      hasStoredTokens: false,
-      tenantId: null,
-      tokenExpiresAt: null,
-      oauthConfigured: false,
-      tokenStorageConfigured: false,
-      canConnect: false,
-      configIssues: ["FINANCE_XERO_CLIENT_ID is required"],
-      tokenStorageIssues: ["FINANCE_XERO_ENCRYPTION_KEY is required"],
-    });
-
+  it("tells managers to connect Xero from the admin page when not connected", async () => {
     await expect(
       buildFinanceSnapshotMissingMessage({
         member: financeManager(),
         reportTitle: "This revenue report",
         dataLabel: "monthly revenue snapshots",
       })
-    ).resolves.toContain("setup is incomplete");
+    ).resolves.toContain("admin Xero page");
   });
 
   it("tells viewers when the first finance sync has not run yet", async () => {
@@ -114,17 +92,7 @@ describe("finance report availability messaging", () => {
   });
 
   it("reports sync failures as the reason data is missing", async () => {
-    mockGetFinanceXeroRouteStatus.mockResolvedValue({
-      connected: true,
-      hasStoredTokens: true,
-      tenantId: "tenant-123",
-      tokenExpiresAt: new Date("2026-04-20T00:00:00.000Z"),
-      oauthConfigured: true,
-      tokenStorageConfigured: true,
-      canConnect: true,
-      configIssues: [],
-      tokenStorageIssues: [],
-    });
+    mockIsXeroConnected.mockResolvedValue(true);
     mockGetFinanceSyncDiagnosticsStatus.mockResolvedValue({
       workflow: "daily-finance-sync",
       latestRun: {
@@ -168,17 +136,7 @@ describe("finance report availability messaging", () => {
   });
 
   it("uses a generic storage-read message when synced data cannot be read", async () => {
-    mockGetFinanceXeroRouteStatus.mockResolvedValue({
-      connected: true,
-      hasStoredTokens: true,
-      tenantId: "tenant-123",
-      tokenExpiresAt: new Date("2026-04-20T00:00:00.000Z"),
-      oauthConfigured: true,
-      tokenStorageConfigured: true,
-      canConnect: true,
-      configIssues: [],
-      tokenStorageIssues: [],
-    });
+    mockIsXeroConnected.mockResolvedValue(true);
     mockGetFinanceSyncDiagnosticsStatus.mockResolvedValue({
       workflow: "daily-finance-sync",
       latestRun: {

@@ -12,6 +12,11 @@ import {
   buildFinanceSnapshotLoadErrorMessage,
   buildFinanceSnapshotMissingMessage,
 } from "@/lib/finance-report-availability";
+import {
+  extractPnlLineItems,
+  findPnlSection,
+  readPnlReportPayload,
+} from "@/lib/finance-pnl-snapshot";
 import { formatCents } from "@/lib/utils";
 
 const FINANCE_TIMEZONE = APP_TIME_ZONE;
@@ -119,6 +124,17 @@ export interface FinanceCostsReportLineItemRow {
   periodsPresent: string;
 }
 
+export interface FinanceCostsReportChart {
+  monthly: Array<{ label: string; costsCents: number }>;
+  mix: Array<{ name: string; valueCents: number }>;
+  cateringRatio: Array<{
+    label: string;
+    ratio: number | null;
+    cateringCents: number;
+    hutFeeRevenueCents: number | null;
+  }>;
+}
+
 export interface FinanceCostsReportPageModel {
   generatedOn: string;
   isManager: boolean;
@@ -130,6 +146,8 @@ export interface FinanceCostsReportPageModel {
   summaryCards: FinanceCostsReportSummaryCard[];
   monthlyRows: FinanceCostsReportMonthlyRow[];
   lineItemRows: FinanceCostsReportLineItemRow[];
+  cateringRatioCard: FinanceCostsReportSummaryCard | null;
+  chart: FinanceCostsReportChart;
   sourceNotes: Array<{
     label: string;
     description: string;
@@ -255,6 +273,13 @@ export async function buildFinanceCostsReportPageModel(input: {
       totalCostsCents / parsedSnapshots.length
     );
     const lineItemRows = buildCostsLineItemRows(parsedSnapshots);
+    const rawPayloadById = new Map(
+      snapshots.map((snapshot) => [snapshot.id, snapshot.payload])
+    );
+    const { chart, cateringRatioCard } = buildCostsChart(
+      parsedSnapshots,
+      rawPayloadById
+    );
 
     return {
       generatedOn: formatDateTime(new Date().toISOString()),
@@ -262,6 +287,8 @@ export async function buildFinanceCostsReportPageModel(input: {
       filters,
       reportHref,
       filterWarnings: warnings,
+      chart,
+      cateringRatioCard,
       coverageSummary: `Showing ${parsedSnapshots.length} monthly profit-and-loss snapshot${parsedSnapshots.length === 1 ? "" : "s"} with cost detail from ${latestSnapshot.periodLabel} backwards.`,
       summaryCards: [
         {
@@ -336,8 +363,116 @@ function buildUnavailableCostsReportModel(input: {
     summaryCards: [],
     monthlyRows: [],
     lineItemRows: [],
+    cateringRatioCard: null,
+    chart: { monthly: [], mix: [], cateringRatio: [] },
     sourceNotes: buildCostsSourceNotes(),
   };
+}
+
+const CATERING_LABEL_KEYWORDS = ["catering"];
+const HUT_FEE_INCOME_KEYWORDS = ["hut fee", "hut fees", "accommodation"];
+const COST_INCOME_SECTION_KEYWORDS = ["income", "revenue"];
+
+function sumCateringCents(snapshot: ParsedCostsSnapshot): number {
+  return snapshot.lineItems
+    .filter((item) =>
+      CATERING_LABEL_KEYWORDS.some((keyword) =>
+        item.lineItem.toLowerCase().includes(keyword)
+      )
+    )
+    .reduce((total, item) => total + item.amountCents, 0);
+}
+
+function readHutFeeIncomeCents(payload: unknown): number | null {
+  const parsed = readPnlReportPayload(payload);
+  if (!parsed) {
+    return null;
+  }
+
+  const incomeSection = findPnlSection(parsed.rows, COST_INCOME_SECTION_KEYWORDS);
+  if (!incomeSection) {
+    return null;
+  }
+
+  const matched = extractPnlLineItems(incomeSection).filter((item) =>
+    HUT_FEE_INCOME_KEYWORDS.some((keyword) =>
+      item.label.toLowerCase().includes(keyword)
+    )
+  );
+  if (matched.length === 0) {
+    return null;
+  }
+
+  return matched.reduce((total, item) => total + item.amountCents, 0);
+}
+
+function formatRatioPercent(ratio: number): string {
+  return new Intl.NumberFormat(APP_LOCALE, {
+    style: "percent",
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+  }).format(ratio);
+}
+
+function buildCostsChart(
+  parsedSnapshots: ParsedCostsSnapshot[],
+  rawPayloadById: Map<string, unknown>
+): {
+  chart: FinanceCostsReportChart;
+  cateringRatioCard: FinanceCostsReportSummaryCard | null;
+} {
+  const cateringRatio = [...parsedSnapshots].reverse().map((snapshot) => {
+    const cateringCents = sumCateringCents(snapshot);
+    const hutFeeRevenueCents = readHutFeeIncomeCents(
+      rawPayloadById.get(snapshot.snapshotId)
+    );
+    const ratio =
+      hutFeeRevenueCents && hutFeeRevenueCents > 0
+        ? Number((cateringCents / hutFeeRevenueCents).toFixed(4))
+        : null;
+    return { label: snapshot.periodLabel, ratio, cateringCents, hutFeeRevenueCents };
+  });
+
+  const latest = parsedSnapshots[0];
+  const mixBySection = new Map<string, number>();
+  if (latest) {
+    for (const item of latest.lineItems) {
+      mixBySection.set(
+        item.section,
+        (mixBySection.get(item.section) ?? 0) + item.amountCents
+      );
+    }
+  }
+  const mix = Array.from(mixBySection.entries())
+    .map(([name, valueCents]) => ({ name, valueCents }))
+    .sort((left, right) => right.valueCents - left.valueCents)
+    .slice(0, 8);
+
+  const monthly = [...parsedSnapshots]
+    .reverse()
+    .map((snapshot) => ({
+      label: snapshot.periodLabel,
+      costsCents: snapshot.totalCostsCents,
+    }));
+
+  const latestRatioEntry = cateringRatio[cateringRatio.length - 1];
+  const cateringRatioCard: FinanceCostsReportSummaryCard | null = latest
+    ? {
+        title: "Catering vs hut fees",
+        value:
+          latestRatioEntry && latestRatioEntry.ratio !== null
+            ? formatRatioPercent(latestRatioEntry.ratio)
+            : "—",
+        description:
+          "Catering cost as a percentage of hut-fee income in the latest synced month.",
+        footnote:
+          latestRatioEntry && latestRatioEntry.hutFeeRevenueCents !== null
+            ? `${formatFinanceAmount(latestRatioEntry.cateringCents)} catering on ${formatFinanceAmount(latestRatioEntry.hutFeeRevenueCents)} hut-fee income.`
+            : "Hut-fee income could not be identified in the latest snapshot.",
+      }
+    : null;
+
+  return { chart: { monthly, mix, cateringRatio }, cateringRatioCard };
 }
 
 function buildCostsSourceNotes() {

@@ -33,6 +33,10 @@ import {
   type FinanceCostsReportMonthlyRow,
   type FinanceCostsReportSummaryCard,
 } from "@/lib/finance-costs-report-page";
+import { FINANCE_SERIES_COLORS } from "@/components/finance/charts/finance-chart-theme";
+import { TrendChart } from "@/components/finance/charts/trend-chart";
+import { MixPieChart } from "@/components/finance/charts/mix-pie-chart";
+import { KpiTrendCard } from "@/components/finance/charts/kpi-trend-card";
 
 type FinanceCostsPageSearchParams = Promise<
   Record<string, string | string[] | undefined>
@@ -308,6 +312,75 @@ export default async function FinanceCostsPage({
       ) : (
         <>
           <SummaryCards cards={model.summaryCards} />
+
+          <div className="grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg text-slate-900">
+                  Monthly costs
+                </CardTitle>
+                <CardDescription className="text-sm text-slate-600">
+                  Total expenses per month from the synced profit-and-loss
+                  snapshots.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <TrendChart
+                  variant="bar"
+                  xKey="label"
+                  data={model.chart.monthly}
+                  series={[
+                    {
+                      key: "costsCents",
+                      name: "Costs",
+                      color: FINANCE_SERIES_COLORS.costs,
+                      valueType: "currency",
+                    },
+                  ]}
+                  emptyMessage="No monthly cost snapshots are available yet."
+                />
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg text-slate-900">
+                  Expense mix
+                </CardTitle>
+                <CardDescription className="text-sm text-slate-600">
+                  Cost sections from the latest synced month.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <MixPieChart
+                  data={model.chart.mix.map((item) => ({
+                    name: item.name,
+                    value: item.valueCents,
+                  }))}
+                  valueType="currency"
+                  emptyMessage="No cost sections were available in the latest snapshot."
+                />
+              </CardContent>
+            </Card>
+          </div>
+
+          {model.cateringRatioCard ? (
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+              <KpiTrendCard
+                title={model.cateringRatioCard.title}
+                value={model.cateringRatioCard.value}
+                color={FINANCE_SERIES_COLORS.costs}
+                valueType="percent"
+                series={model.chart.cateringRatio
+                  .filter((point) => point.ratio !== null)
+                  .map((point) => ({
+                    label: point.label,
+                    value: point.ratio ?? 0,
+                  }))}
+                description={model.cateringRatioCard.footnote}
+              />
+            </div>
+          ) : null}
 
           <div className="grid gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(22rem,1fr)]">
             <Card>

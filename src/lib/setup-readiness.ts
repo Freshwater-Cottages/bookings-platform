@@ -23,7 +23,7 @@ export const SETUP_STEP_IDS = [
   "email-ses",
   "sentry",
   "xero-operational",
-  "xero-finance",
+  "finance-dashboard",
   "xero-mappings",
 ] as const;
 
@@ -62,8 +62,6 @@ export interface SetupDatabaseSnapshot {
   membershipCancellationArchiveContacts: boolean;
   operationalXeroConnected: boolean;
   operationalXeroTokenExpiresAt: string | null;
-  financeXeroConnected: boolean;
-  financeXeroTokenExpiresAt: string | null;
   xeroAccountMappingCount: number;
   xeroHutFeeItemMappingCount: number;
   xeroEntranceFeeMappingCount: number;
@@ -80,7 +78,7 @@ export interface SetupStepCheck {
   href?: string;
   action?: {
     type: "provider-test";
-    provider: "stripe" | "smtp" | "sentry" | "xero" | "finance-xero";
+    provider: "stripe" | "smtp" | "sentry" | "xero";
     label: string;
   };
   progress: "open" | "completed" | "skipped";
@@ -143,7 +141,7 @@ const CATEGORY_META: Record<
   },
   finance: {
     title: "Finance",
-    description: "Finance Xero connection and Xero chart/item mappings.",
+    description: "Finance dashboard module and Xero chart/item mappings.",
   },
 };
 
@@ -954,73 +952,50 @@ function buildOperationalXeroCheck(
   );
 }
 
-function buildFinanceXeroCheck(
+function buildFinanceDashboardCheck(
   env: Env,
   db: SetupDatabaseSnapshot | undefined,
   progress: SetupProgressState,
 ): SetupStepCheck {
   const moduleState = buildModuleLayerState(env, db, "financeDashboard");
   const enabled = moduleState.effectiveEnabled;
-  const issues = [
-    !hasEnv(env, "FINANCE_XERO_CLIENT_ID")
-      ? "FINANCE_XERO_CLIENT_ID is missing"
-      : null,
-    !hasEnv(env, "FINANCE_XERO_CLIENT_SECRET")
-      ? "FINANCE_XERO_CLIENT_SECRET is missing"
-      : null,
-    !isHttpUrl(readEnv(env, "FINANCE_XERO_REDIRECT_URI"))
-      ? "FINANCE_XERO_REDIRECT_URI must be a valid http(s) URL"
-      : null,
-    !isHexEncryptionKey(readEnv(env, "FINANCE_XERO_ENCRYPTION_KEY"))
-      ? "FINANCE_XERO_ENCRYPTION_KEY must be a 64-character hex string"
-      : null,
-  ].filter((issue): issue is string => Boolean(issue));
-  const connected = Boolean(db?.financeXeroConnected);
+  const operationalConnected = Boolean(db?.operationalXeroConnected);
 
   return applyProgress(
     {
-      id: "xero-finance",
-      title: "Finance Xero",
+      id: "finance-dashboard",
+      title: "Finance dashboard",
       description:
-        "Separate finance-reporting Xero OAuth boundary and token storage.",
+        "Finance reporting dashboards backed by the shared operational Xero connection.",
       status: !enabled
         ? "warning"
-        : issues.length > 0
-          ? "blocked"
-          : !db
-            ? "warning"
-            : connected
-              ? "complete"
-              : "not_started",
+        : !db
+          ? "warning"
+          : operationalConnected
+            ? "complete"
+            : "not_started",
       required: enabled,
       message: !enabled
         ? "Finance dashboard is inactive by env capability or Admin Modules activation."
         : !db
-          ? "Finance Xero env is ready; connection state was not checked."
-          : connected
-            ? "Finance Xero is connected."
-            : issues.length > 0
-              ? "Finance Xero env needs attention."
-              : "Finance Xero env is ready; connect from the finance dashboard.",
+          ? "Finance dashboard is enabled; Xero connection state was not checked."
+          : operationalConnected
+            ? "Finance dashboard is ready and the shared Xero connection is active."
+            : "Finance dashboard is enabled; connect Xero from the admin Xero page so finance sync can run.",
       details: [
         `Env capability (${moduleState.envVar}): ${
           moduleState.envEnabled ? "enabled" : "disabled"
         }`,
         formatModuleActivationDetail(db, moduleState.adminEnabled),
         `Effective state: ${enabled ? "enabled" : "disabled"}`,
-        ...issues,
+        "Finance reporting reads from the shared operational Xero connection (requires the accounting.reports.read scope).",
         !db
           ? "Database connection state not checked."
-          : connected
-            ? `Token expires: ${db?.financeXeroTokenExpiresAt ?? "unknown"}`
-            : "No active finance Xero token found.",
+          : operationalConnected
+            ? "Operational Xero is connected; run a finance sync to load reporting data."
+            : "No active Xero token found. Connect Xero from the admin Xero page.",
       ],
       href: "/finance",
-      action: {
-        type: "provider-test",
-        provider: "finance-xero",
-        label: "Check Finance Xero",
-      },
     },
     progress,
   );
@@ -1109,7 +1084,7 @@ export function buildSetupReadiness(
       buildOperationalXeroCheck(env, input.database, progress),
     ],
     finance: [
-      buildFinanceXeroCheck(env, input.database, progress),
+      buildFinanceDashboardCheck(env, input.database, progress),
       buildXeroMappingCheck(input.database, progress),
     ],
   };
@@ -1206,9 +1181,5 @@ export function getSetupRequiredEnvNames(): string[] {
     "XERO_REDIRECT_URI",
     "XERO_ENCRYPTION_KEY",
     "XERO_WEBHOOK_KEY",
-    "FINANCE_XERO_CLIENT_ID",
-    "FINANCE_XERO_CLIENT_SECRET",
-    "FINANCE_XERO_REDIRECT_URI",
-    "FINANCE_XERO_ENCRYPTION_KEY",
   ];
 }

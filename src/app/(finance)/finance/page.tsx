@@ -1,6 +1,4 @@
 import Link from "next/link";
-import { revalidatePath } from "next/cache";
-import { redirect } from "next/navigation";
 import {
   Activity,
   ArrowRight,
@@ -21,10 +19,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { FinanceTechnicalDetails } from "@/components/finance/technical-details";
-import {
-  requireFinanceManager,
-  requireFinanceViewer,
-} from "@/lib/finance-auth";
+import { requireFinanceViewer } from "@/lib/finance-auth";
 import {
   buildDefaultFinanceBalanceSheetReportFilters,
   buildFinanceBalanceSheetReportHref,
@@ -52,7 +47,6 @@ import {
   buildDefaultFinanceCashReportFilters,
   buildFinanceCashReportHref,
 } from "@/lib/finance-cash-report-page";
-import { disconnectFinanceXero } from "@/lib/finance-xero";
 import { buildFinanceRevenueReportHref } from "@/lib/finance-revenue-report-page";
 
 const sectionIcons = {
@@ -198,36 +192,9 @@ function FinanceStatusNotice({
 
 function ManagerActionButton({
   action,
-  disconnectAction,
 }: {
   action: FinanceLandingManagerAction;
-  disconnectAction: (formData: FormData) => Promise<void>;
 }) {
-  const isProminentAction = action.kind === "connect" || action.kind === "sync";
-  const descriptionClass = isProminentAction
-    ? "block text-xs text-primary-foreground/80"
-    : "block text-xs text-slate-500";
-
-  if (action.kind === "disconnect") {
-    return (
-      <form action={disconnectAction}>
-        <Button
-          type="submit"
-          variant="destructive"
-          className="w-full justify-between"
-        >
-          <span className="text-left">
-            <span className="block text-sm font-medium">{action.label}</span>
-            <span className="block text-xs text-red-100/90">
-              {action.description}
-            </span>
-          </span>
-          <ArrowRight className="ml-3 h-4 w-4 shrink-0" />
-        </Button>
-      </form>
-    );
-  }
-
   if (!action.href) {
     return null;
   }
@@ -238,7 +205,9 @@ function ManagerActionButton({
         <Button type="submit" className="w-full justify-between">
           <span className="text-left">
             <span className="block text-sm font-medium">{action.label}</span>
-            <span className={descriptionClass}>{action.description}</span>
+            <span className="block text-xs text-primary-foreground/80">
+              {action.description}
+            </span>
           </span>
           <ArrowRight className="ml-3 h-4 w-4 shrink-0" />
         </Button>
@@ -246,28 +215,16 @@ function ManagerActionButton({
     );
   }
 
-  const isConnectAction = action.kind === "connect";
-
   return (
-    <Button
-      asChild
-      variant={isConnectAction ? "default" : "outline"}
-      className="w-full justify-between"
-    >
-      <a
-        href={action.href}
-        target={action.kind === "link" ? "_blank" : undefined}
-        rel={action.kind === "link" ? "noreferrer" : undefined}
-      >
+    <Button asChild variant="outline" className="w-full justify-between">
+      <a href={action.href}>
         <span className="text-left">
           <span className="block text-sm font-medium">{action.label}</span>
-          <span className={descriptionClass}>{action.description}</span>
+          <span className="block text-xs text-slate-500">
+            {action.description}
+          </span>
         </span>
-        {action.kind === "link" ? (
-          <ArrowUpRight className="ml-3 h-4 w-4 shrink-0" />
-        ) : (
-          <ArrowRight className="ml-3 h-4 w-4 shrink-0" />
-        )}
+        <ArrowUpRight className="ml-3 h-4 w-4 shrink-0" />
       </a>
     </Button>
   );
@@ -275,10 +232,8 @@ function ManagerActionButton({
 
 function FinanceManagerWorkspace({
   workspace,
-  disconnectAction,
 }: {
   workspace: FinanceLandingManagerWorkspace;
-  disconnectAction: (formData: FormData) => Promise<void>;
 }) {
   return (
     <Card>
@@ -299,55 +254,12 @@ function FinanceManagerWorkspace({
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
-      {workspace.error ? (
-        <div className="rounded-xl border border-amber-200 bg-amber-50/70 p-4 text-sm leading-6 text-amber-950">
-          {workspace.error}
-        </div>
-      ) : (
-          <div className="grid gap-4 md:grid-cols-3">
-            {workspace.cards.map((card) => (
-              <Card key={card.title}>
-                <CardHeader className="pb-3">
-                  <CardDescription>{card.title}</CardDescription>
-                  <CardTitle className="text-2xl text-slate-900">
-                    {card.value}
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-2">
-                  <p className="text-sm leading-6 text-slate-600">
-                    {card.description}
-                  </p>
-                  {card.footnote ? (
-                    <p className="text-xs font-medium text-slate-500">
-                      {card.footnote}
-                    </p>
-                  ) : null}
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        )}
-
-        {workspace.configIssues.length > 0 ||
-        workspace.tokenStorageIssues.length > 0 ? (
-          <div className="rounded-xl border border-amber-200 bg-amber-50/70 p-4 text-sm leading-6 text-amber-950">
-            <p className="font-semibold">Setup issues to fix</p>
-            {workspace.configIssues.length > 0 ? (
-              <p>OAuth config: {workspace.configIssues.join(" ")}</p>
-            ) : null}
-            {workspace.tokenStorageIssues.length > 0 ? (
-              <p>Token storage: {workspace.tokenStorageIssues.join(" ")}</p>
-            ) : null}
-          </div>
-        ) : null}
-
         {workspace.actions.length > 0 ? (
           <div className="grid gap-3 md:grid-cols-2">
             {workspace.actions.map((action) => (
               <ManagerActionButton
                 key={`${action.kind}:${action.label}`}
                 action={action}
-                disconnectAction={disconnectAction}
               />
             ))}
           </div>
@@ -373,24 +285,11 @@ export default async function FinancePage({
   searchParams,
 }: {
   searchParams: Promise<{
-    connected?: string;
-    error?: string;
     sync?: string;
     syncError?: string;
-    xero?: string;
   }>;
 }) {
   const params = await searchParams;
-
-  async function disconnectFinanceXeroAction(formData: FormData) {
-    "use server";
-
-    void formData;
-    await requireFinanceManager("/finance");
-    await disconnectFinanceXero();
-    revalidatePath("/finance");
-    redirect("/finance?xero=disconnected");
-  }
 
   const member = await requireFinanceViewer("/finance");
   const model = await buildFinanceLandingPageModel({ member });
@@ -421,26 +320,13 @@ export default async function FinancePage({
     buildDefaultFinanceWorkingCapitalReportFilters(),
   );
   const notice =
-    params.error
+    params.sync === "completed"
       ? {
-          tone: "destructive" as const,
-          title: "Finance Xero action failed",
-          description: params.error,
-        }
-      : params.connected === "true"
-        ? {
           tone: "success" as const,
-          title: "Finance Xero connected",
+          title: "Finance sync complete",
           description:
-              "The finance Xero connection completed successfully. You can run a sync now or wait for the daily schedule to refresh Xero-backed reports.",
+            "Fresh finance snapshots were stored successfully. Finance reports can now load the latest synced Xero data.",
         }
-      : params.sync === "completed"
-        ? {
-            tone: "success" as const,
-            title: "Finance sync complete",
-            description:
-              "Fresh finance snapshots were stored successfully. Finance reports can now load the latest synced Xero data.",
-          }
       : params.sync === "partial"
         ? {
             tone: "warning" as const,
@@ -462,13 +348,6 @@ export default async function FinancePage({
             description:
               params.syncError ??
               "The manual finance sync could not complete. Check the diagnostics below and try again after fixing the issue.",
-          }
-      : params.xero === "disconnected"
-        ? {
-            tone: "success" as const,
-            title: "Finance Xero disconnected",
-            description:
-                "The saved finance Xero connection was cleared. Reconnect it before expecting fresh Xero-backed finance data.",
           }
         : null;
 
@@ -558,10 +437,7 @@ export default async function FinancePage({
         </Card>
 
         {model.managerWorkspace ? (
-          <FinanceManagerWorkspace
-            workspace={model.managerWorkspace}
-            disconnectAction={disconnectFinanceXeroAction}
-          />
+          <FinanceManagerWorkspace workspace={model.managerWorkspace} />
         ) : (
           <Card>
             <CardHeader>

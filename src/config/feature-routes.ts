@@ -42,7 +42,6 @@ export const FEATURE_ROUTE_RULES: FeatureRouteRule[] = [
       "/admin/xero",
       "/api/admin/xero",
       "/api/cron/xero",
-      "/api/finance/xero",
       "/api/webhooks/xero",
     ],
     patterns: [

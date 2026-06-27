@@ -1,11 +1,13 @@
 import { FinanceSnapshotType, Prisma } from "@prisma/client";
-import type { Invoice, ReportCell, ReportFields, ReportWithRow } from "xero-node";
+import type {
+  Account,
+  Invoice,
+  ReportCell,
+  ReportFields,
+  ReportWithRow,
+} from "xero-node";
 import { APP_TIME_ZONE } from "@/config/operational";
 import { parseDateOnly } from "@/lib/date-only";
-import {
-  recordFinanceXeroApiUsage,
-  type FinanceXeroRateLimitCategory,
-} from "@/lib/finance-xero-api-usage";
 import type {
   FinanceSyncDatasetContext,
   FinanceSyncSnapshotInput,
@@ -14,7 +16,7 @@ import {
   getXeroErrorHeader,
   getXeroErrorStatusCode,
 } from "@/lib/xero-error-shape";
-import { callXeroApi, XeroDailyLimitError } from "@/lib/xero";
+import { callXeroApi } from "@/lib/xero";
 
 export const FINANCE_SYNC_DATA_TIMEZONE = APP_TIME_ZONE;
 export const FINANCE_SYNC_XERO_PROFIT_AND_LOSS_MONTHLY_DATASET_KEY =
@@ -31,6 +33,8 @@ export const FINANCE_SYNC_XERO_AGED_PAYABLES_DATASET_KEY =
   "xero-aged-payables";
 export const FINANCE_SYNC_XERO_ACCOUNTS_PAYABLE_INVOICES_DATASET_KEY =
   "xero-accounts-payable-invoices";
+export const FINANCE_SYNC_XERO_CHART_OF_ACCOUNTS_DATASET_KEY =
+  "xero-chart-of-accounts";
 
 const FINANCE_XERO_PAGE_SIZE = 100;
 const FINANCE_AGED_INVOICE_STATUSES = [
@@ -47,9 +51,6 @@ type FinanceAgedInvoiceBucketKey =
   | "days31To60"
   | "days61To90"
   | "days91Plus";
-type FinanceRateLimitObserver = (
-  rateLimitCategory: FinanceXeroRateLimitCategory
-) => void;
 
 interface XeroReportAttributeLike {
   id?: string;
@@ -407,25 +408,6 @@ function toOptionalDateOnlyText(value: unknown): string | null {
   return toOptionalText(value);
 }
 
-function getFinanceXeroErrorMessage(error: unknown): string | null {
-  if (error instanceof Error) {
-    return error.message;
-  }
-
-  if (typeof error === "string") {
-    return error;
-  }
-
-  if (error && typeof error === "object" && "message" in error) {
-    const message = error.message;
-    if (typeof message === "string") {
-      return message;
-    }
-  }
-
-  return error ? String(error) : null;
-}
-
 function getFinanceXeroScopeErrorMessage(
   error: unknown,
   operation: string
@@ -444,8 +426,8 @@ function getFinanceXeroScopeErrorMessage(
     : null;
 
   return requiredScope
-    ? `Finance Xero is missing a required OAuth scope for ${operation}. Add ${requiredScope} to the finance Xero app and reconnect finance Xero.`
-    : `Finance Xero is missing a required OAuth scope for ${operation}. Update the finance Xero app scopes and reconnect finance Xero.`;
+    ? `Xero is missing a required OAuth scope for ${operation}. Add ${requiredScope} to the Xero app and reconnect Xero from the admin panel.`
+    : `Xero is missing a required OAuth scope for ${operation}. Update the Xero app scopes and reconnect Xero from the admin panel.`;
 }
 
 function normalizeFinanceXeroError(error: unknown, operation: string): unknown {
@@ -457,67 +439,20 @@ function normalizeFinanceXeroError(error: unknown, operation: string): unknown {
   return new Error(scopeErrorMessage);
 }
 
-function getFinanceXeroRateLimitCategory(
-  error: unknown
-): FinanceXeroRateLimitCategory {
-  if (error instanceof XeroDailyLimitError) {
-    return "day";
-  }
-
-  if (getXeroErrorStatusCode(error) !== 429) {
-    return null;
-  }
-
-  const rateLimitProblem = getXeroErrorHeader(error, "x-rate-limit-problem");
-  if (rateLimitProblem === "day" || rateLimitProblem === "minute") {
-    return rateLimitProblem;
-  }
-
-  return "unknown";
-}
-
-async function callFinanceXeroApi<T>(
-  fn: (observeRateLimit: FinanceRateLimitObserver) => Promise<T>,
-  options: {
-    operation: string;
-    resourceType: string;
-    workflow: string;
-  }
+/**
+ * Wrap a finance report Xero call so a 401 insufficient_scope failure is
+ * rethrown with an actionable "reconnect Xero" message. Usage metering and
+ * rate-limit handling are already done by the inner callXeroApi against the
+ * operational connection.
+ */
+async function withFinanceReportScopeError<T>(
+  operation: string,
+  fn: () => Promise<T>
 ): Promise<T> {
-  const startedAt = Date.now();
-  let observedRateLimitCategory: FinanceXeroRateLimitCategory = null;
-
   try {
-    const result = await fn((rateLimitCategory) => {
-      observedRateLimitCategory = rateLimitCategory;
-    });
-
-    await recordFinanceXeroApiUsage({
-      operation: options.operation,
-      resourceType: options.resourceType,
-      workflow: options.workflow,
-      success: true,
-      rateLimitCategory: observedRateLimitCategory,
-      durationMs: Date.now() - startedAt,
-    });
-
-    return result;
+    return await fn();
   } catch (error) {
-    const normalizedError = normalizeFinanceXeroError(error, options.operation);
-
-    await recordFinanceXeroApiUsage({
-      operation: options.operation,
-      resourceType: options.resourceType,
-      workflow: options.workflow,
-      success: false,
-      rateLimitCategory:
-        observedRateLimitCategory ?? getFinanceXeroRateLimitCategory(error),
-      statusCode: getXeroErrorStatusCode(error) ?? null,
-      durationMs: Date.now() - startedAt,
-      errorMessage: getFinanceXeroErrorMessage(normalizedError),
-    });
-
-    throw normalizedError;
+    throw normalizeFinanceXeroError(error, operation);
   }
 }
 
@@ -760,8 +695,9 @@ async function listFinanceOpenInvoices(
     let page = 1;
 
     while (true) {
-      const response = await callFinanceXeroApi(
-        (observeRateLimit) =>
+      const response = await withFinanceReportScopeError(
+        "getInvoices",
+        () =>
           callXeroApi(
             () =>
               context.xero.accountingApi.getInvoices(
@@ -785,14 +721,8 @@ async function listFinanceOpenInvoices(
               resourceType: "INVOICE",
               workflow: context.workflow,
               context: `financeSyncDatasets ${options.contextLabel} page ${page}`,
-              onRateLimit: (event) => observeRateLimit(event.rateLimitCategory),
             }
-          ),
-        {
-          operation: "getInvoices",
-          resourceType: "INVOICE",
-          workflow: context.workflow,
-        }
+          )
       );
 
       const pageInvoices = response.body.invoices ?? [];
@@ -1393,8 +1323,9 @@ export async function syncFinanceProfitAndLossMonthlySnapshot(
   context: FinanceSyncDatasetContext
 ): Promise<FinanceSyncSnapshotInput> {
   const window = getFinanceReportWindow(context.startedAt);
-  const response = await callFinanceXeroApi(
-    (observeRateLimit) =>
+  const response = await withFinanceReportScopeError(
+    "getReportProfitAndLoss",
+    () =>
       callXeroApi(
         () =>
           context.xero.accountingApi.getReportProfitAndLoss(
@@ -1415,14 +1346,8 @@ export async function syncFinanceProfitAndLossMonthlySnapshot(
           resourceType: "REPORT",
           workflow: context.workflow,
           context: "financeSyncDatasets profitAndLossMonthly",
-          onRateLimit: (event) => observeRateLimit(event.rateLimitCategory),
         }
-      ),
-    {
-      operation: "getReportProfitAndLoss",
-      resourceType: "REPORT",
-      workflow: context.workflow,
-    }
+      )
   );
 
   return buildFinanceReportSnapshot({
@@ -1438,8 +1363,9 @@ export async function syncFinanceBalanceSheetSnapshot(
   context: FinanceSyncDatasetContext
 ): Promise<FinanceSyncSnapshotInput> {
   const window = getFinanceReportWindow(context.startedAt);
-  const response = await callFinanceXeroApi(
-    (observeRateLimit) =>
+  const response = await withFinanceReportScopeError(
+    "getReportBalanceSheet",
+    () =>
       callXeroApi(
         () =>
           context.xero.accountingApi.getReportBalanceSheet(
@@ -1457,14 +1383,8 @@ export async function syncFinanceBalanceSheetSnapshot(
           resourceType: "REPORT",
           workflow: context.workflow,
           context: "financeSyncDatasets balanceSheet",
-          onRateLimit: (event) => observeRateLimit(event.rateLimitCategory),
         }
-      ),
-    {
-      operation: "getReportBalanceSheet",
-      resourceType: "REPORT",
-      workflow: context.workflow,
-    }
+      )
   );
 
   return buildFinanceReportSnapshot({
@@ -1479,8 +1399,9 @@ export async function syncFinanceBankBalancesSnapshot(
   context: FinanceSyncDatasetContext
 ): Promise<FinanceSyncSnapshotInput> {
   const window = getFinanceReportWindow(context.startedAt);
-  const response = await callFinanceXeroApi(
-    (observeRateLimit) =>
+  const response = await withFinanceReportScopeError(
+    "getReportBankSummary",
+    () =>
       callXeroApi(
         () =>
           context.xero.accountingApi.getReportBankSummary(
@@ -1493,14 +1414,8 @@ export async function syncFinanceBankBalancesSnapshot(
           resourceType: "REPORT",
           workflow: context.workflow,
           context: "financeSyncDatasets bankBalances",
-          onRateLimit: (event) => observeRateLimit(event.rateLimitCategory),
         }
-      ),
-    {
-      operation: "getReportBankSummary",
-      resourceType: "REPORT",
-      workflow: context.workflow,
-    }
+      )
   );
 
   return buildFinanceReportSnapshot({
@@ -1509,6 +1424,92 @@ export async function syncFinanceBankBalancesSnapshot(
     periodStart: window.periodStart,
     periodEnd: window.asOfDate,
     report: getRequiredReport(response.body, "getReportBankSummary"),
+  });
+}
+
+interface FinanceChartOfAccountsEntryPayload {
+  accountId: string;
+  code: string | null;
+  name: string | null;
+  type: string | null;
+  class: string | null;
+  status: string | null;
+}
+
+interface FinanceChartOfAccountsPayload {
+  accountCount: number;
+  accounts: FinanceChartOfAccountsEntryPayload[];
+}
+
+/**
+ * Map the operational chart of accounts into a JSON-safe snapshot. The stored
+ * AccountID-to-GL-code entries let revenue reconciliation match profit-and-loss
+ * rows (which carry an "account" cell attribute holding the AccountID) to their
+ * GL codes without a live Xero call. Mirrors the active-account selection used by
+ * the admin chart-of-accounts route, but keeps every account that has an
+ * AccountID (including archived ones) so historical reports still resolve.
+ */
+export function buildFinanceChartOfAccountsSnapshot(input: {
+  asOfDate: Date;
+  accounts: readonly Account[];
+}): FinanceSyncSnapshotInput {
+  const entries: FinanceChartOfAccountsEntryPayload[] = input.accounts
+    .map((account) => {
+      const accountId = toOptionalText(account.accountID);
+      if (!accountId) {
+        return null;
+      }
+
+      return {
+        accountId,
+        code: toOptionalText(account.code),
+        name: toOptionalText(account.name),
+        type: account.type != null ? String(account.type) : null,
+        class: account._class != null ? String(account._class) : null,
+        status: account.status != null ? String(account.status) : null,
+      } satisfies FinanceChartOfAccountsEntryPayload;
+    })
+    .filter((entry): entry is FinanceChartOfAccountsEntryPayload => entry !== null)
+    .sort(
+      (left, right) =>
+        compareNullableStrings(left.code, right.code) ||
+        compareNullableStrings(left.name, right.name)
+    );
+
+  const payload = {
+    accountCount: entries.length,
+    accounts: entries,
+  } as Prisma.InputJsonObject & FinanceChartOfAccountsPayload;
+
+  return {
+    snapshotType: FinanceSnapshotType.CHART_OF_ACCOUNTS,
+    asOfDate: input.asOfDate,
+    periodEnd: input.asOfDate,
+    rowCount: entries.length,
+    payload,
+  };
+}
+
+export async function syncFinanceChartOfAccountsSnapshot(
+  context: FinanceSyncDatasetContext
+): Promise<FinanceSyncSnapshotInput> {
+  const window = getFinanceReportWindow(context.startedAt);
+  // getAccounts only needs accounting.settings.read, which the operational Xero
+  // connection already holds, so this dataset works even before the one-time
+  // accounting.reports.read re-consent that the report datasets require.
+  const response = await callXeroApi(
+    () => context.xero.accountingApi.getAccounts(context.xeroTenantId),
+    {
+      operation: "getAccounts",
+      resourceType: "ACCOUNT",
+      workflow: context.workflow,
+      context: "financeSyncDatasets chartOfAccounts",
+    }
+  );
+
+  return buildFinanceChartOfAccountsSnapshot({
+    asOfDate: window.asOfDate,
+    accounts: response.body.accounts ?? [],
   });
 }
 

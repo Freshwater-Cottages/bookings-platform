@@ -12,31 +12,11 @@ const SECTION = "Section" as never;
 const ROW = "Row" as never;
 const SUMMARY_ROW = "SummaryRow" as never;
 
-const { mockRecordFinanceXeroApiUsage } = vi.hoisted(() => ({
-  mockRecordFinanceXeroApiUsage: vi.fn(),
+const { mockCallXeroApi } = vi.hoisted(() => ({
+  mockCallXeroApi: vi.fn(),
 }));
-const { MockXeroDailyLimitError, mockCallXeroApi } = vi.hoisted(() => {
-  class TestXeroDailyLimitError extends Error {
-    retryAfterSec: number;
 
-    constructor(retryAfterSec: number) {
-      super(`Retry after ${retryAfterSec} seconds`);
-      this.name = "XeroDailyLimitError";
-      this.retryAfterSec = retryAfterSec;
-    }
-  }
-
-  return {
-    MockXeroDailyLimitError: TestXeroDailyLimitError,
-    mockCallXeroApi: vi.fn(),
-  };
-});
-
-vi.mock("@/lib/finance-xero-api-usage", () => ({
-  recordFinanceXeroApiUsage: mockRecordFinanceXeroApiUsage,
-}));
 vi.mock("@/lib/xero", () => ({
-  XeroDailyLimitError: MockXeroDailyLimitError,
   callXeroApi: (fn: () => unknown, options: unknown) =>
     mockCallXeroApi(fn, options),
 }));
@@ -48,11 +28,13 @@ import {
   FINANCE_SYNC_XERO_AGED_PAYABLES_DATASET_KEY,
   FINANCE_SYNC_XERO_BALANCE_SHEET_DATASET_KEY,
   FINANCE_SYNC_XERO_BANK_BALANCES_DATASET_KEY,
+  FINANCE_SYNC_XERO_CHART_OF_ACCOUNTS_DATASET_KEY,
   FINANCE_SYNC_XERO_PROFIT_AND_LOSS_MONTHLY_DATASET_KEY,
   buildFinanceAccountsReceivableInvoicesSnapshot,
   buildFinanceAccountsPayableInvoicesSnapshot,
   buildFinanceAgedReceivablesSnapshot,
   buildFinanceAgedPayablesSnapshot,
+  buildFinanceChartOfAccountsSnapshot,
   buildFinanceReportSnapshot,
   syncFinanceAccountsReceivableInvoicesSnapshot,
   syncFinanceAccountsPayableInvoicesSnapshot,
@@ -60,6 +42,7 @@ import {
   syncFinanceAgedPayablesSnapshot,
   syncFinanceBalanceSheetSnapshot,
   syncFinanceBankBalancesSnapshot,
+  syncFinanceChartOfAccountsSnapshot,
   syncFinanceProfitAndLossMonthlySnapshot,
 } from "@/lib/finance-sync-xero-datasets";
 import { getFinanceSyncDatasets } from "@/lib/finance-sync-datasets";
@@ -77,6 +60,7 @@ function createFinanceSyncContext() {
         getReportBalanceSheet: vi.fn(),
         getReportBankSummary: vi.fn(),
         getInvoices: vi.fn(),
+        getAccounts: vi.fn(),
       },
     },
   };
@@ -139,6 +123,7 @@ describe("finance-sync-datasets", () => {
       FINANCE_SYNC_XERO_ACCOUNTS_RECEIVABLE_INVOICES_DATASET_KEY,
       FINANCE_SYNC_XERO_AGED_PAYABLES_DATASET_KEY,
       FINANCE_SYNC_XERO_ACCOUNTS_PAYABLE_INVOICES_DATASET_KEY,
+      FINANCE_SYNC_XERO_CHART_OF_ACCOUNTS_DATASET_KEY,
     ]);
   });
 
@@ -1220,57 +1205,103 @@ describe("finance-sync-datasets", () => {
         contactCount: 1,
       },
     });
-    expect(mockRecordFinanceXeroApiUsage).toHaveBeenCalledTimes(5);
   });
 
-  it("records finance Xero rate-limit metadata when a retried call eventually succeeds", async () => {
-    const context = createFinanceSyncContext();
-    context.xero.accountingApi.getReportBalanceSheet.mockResolvedValue({
-      body: { reports: [createReport({ reportID: "bs-1", reportName: "Balance Sheet" })] },
+  it("maps the chart of accounts into an AccountID-to-GL-code snapshot", () => {
+    const snapshot = buildFinanceChartOfAccountsSnapshot({
+      asOfDate: new Date("2026-04-20T00:00:00.000Z"),
+      accounts: [
+        {
+          accountID: "acc-subs",
+          code: "203",
+          name: "Annual Subs",
+          type: "REVENUE",
+          _class: "REVENUE",
+          status: "ACTIVE",
+        },
+        {
+          accountID: "acc-hut",
+          code: "200",
+          name: "Hut Fees",
+          type: "REVENUE",
+          _class: "REVENUE",
+          status: "ACTIVE",
+        },
+        // Dropped: no AccountID means the row cannot be matched to a P&L line.
+        { accountID: "", code: "999", name: "Missing id" },
+        { code: "998", name: "No id field" },
+      ] as never,
     });
 
-    mockCallXeroApi.mockImplementation(async (fn: () => unknown, options: any) => {
-      options.onRateLimit?.({
-        attempt: 1,
-        retryAfterSec: 30,
-        rateLimitCategory: "minute",
-      });
-      return fn();
+    expect(snapshot).toMatchObject({
+      snapshotType: FinanceSnapshotType.CHART_OF_ACCOUNTS,
+      asOfDate: new Date("2026-04-20T00:00:00.000Z"),
+      periodEnd: new Date("2026-04-20T00:00:00.000Z"),
+      rowCount: 2,
+      payload: {
+        accountCount: 2,
+        // Sorted by GL code ascending.
+        accounts: [
+          {
+            accountId: "acc-hut",
+            code: "200",
+            name: "Hut Fees",
+            type: "REVENUE",
+            class: "REVENUE",
+            status: "ACTIVE",
+          },
+          {
+            accountId: "acc-subs",
+            code: "203",
+            name: "Annual Subs",
+          },
+        ],
+      },
     });
-
-    await syncFinanceBalanceSheetSnapshot(context as never);
-
-    expect(mockRecordFinanceXeroApiUsage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        operation: "getReportBalanceSheet",
-        resourceType: "REPORT",
-        workflow: "daily-finance-sync",
-        success: true,
-        rateLimitCategory: "minute",
-      })
-    );
   });
 
-  it("classifies daily limit cooldown failures for finance usage metering", async () => {
+  it("fetches the chart of accounts through the operational Xero client", async () => {
     const context = createFinanceSyncContext();
-    const error = new MockXeroDailyLimitError(3600);
+    context.xero.accountingApi.getAccounts.mockResolvedValue({
+      body: {
+        accounts: [
+          {
+            accountID: "acc-subs",
+            code: "203",
+            name: "Annual Subs",
+            type: "REVENUE",
+            _class: "REVENUE",
+            status: "ACTIVE",
+          },
+          {
+            accountID: "acc-hut",
+            code: "200",
+            name: "Hut Fees",
+            type: "REVENUE",
+            _class: "REVENUE",
+            status: "ACTIVE",
+          },
+        ],
+      },
+    });
 
-    context.xero.accountingApi.getReportBalanceSheet.mockRejectedValue(error);
+    const snapshot = await syncFinanceChartOfAccountsSnapshot(context as never);
 
-    await expect(
-      syncFinanceBalanceSheetSnapshot(context as never)
-    ).rejects.toEqual(error);
-
-    expect(mockRecordFinanceXeroApiUsage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        operation: "getReportBalanceSheet",
-        resourceType: "REPORT",
-        workflow: "daily-finance-sync",
-        success: false,
-        rateLimitCategory: "day",
-        errorMessage: "Retry after 3600 seconds",
-      })
+    expect(context.xero.accountingApi.getAccounts).toHaveBeenCalledWith("tenant-123");
+    expect(mockCallXeroApi).toHaveBeenCalledWith(
+      expect.any(Function),
+      expect.objectContaining({ operation: "getAccounts", resourceType: "ACCOUNT" })
     );
+    expect(snapshot).toMatchObject({
+      snapshotType: FinanceSnapshotType.CHART_OF_ACCOUNTS,
+      asOfDate: new Date("2026-04-20T00:00:00.000Z"),
+      periodEnd: new Date("2026-04-20T00:00:00.000Z"),
+      rowCount: 2,
+      payload: {
+        accountCount: 2,
+        accounts: [{ code: "200" }, { code: "203" }],
+      },
+    });
   });
 
   it("rewrites insufficient-scope report failures into reconnect guidance", async () => {
@@ -1290,19 +1321,7 @@ describe("finance-sync-datasets", () => {
     await expect(
       syncFinanceBankBalancesSnapshot(context as never)
     ).rejects.toThrow(
-      "Finance Xero is missing a required OAuth scope for getReportBankSummary. Add accounting.reports.read to the finance Xero app and reconnect finance Xero."
-    );
-
-    expect(mockRecordFinanceXeroApiUsage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        operation: "getReportBankSummary",
-        resourceType: "REPORT",
-        workflow: "daily-finance-sync",
-        success: false,
-        statusCode: 401,
-        errorMessage:
-          "Finance Xero is missing a required OAuth scope for getReportBankSummary. Add accounting.reports.read to the finance Xero app and reconnect finance Xero.",
-      })
+      "Xero is missing a required OAuth scope for getReportBankSummary. Add accounting.reports.read to the Xero app and reconnect Xero from the admin panel."
     );
   });
 });

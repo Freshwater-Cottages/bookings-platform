@@ -5,7 +5,7 @@ import {
   Prisma,
 } from "@prisma/client";
 import { XeroClient } from "xero-node";
-import { getAuthenticatedFinanceXeroClient } from "@/lib/finance-xero";
+import { getAuthenticatedXeroClient } from "@/lib/xero-api-client";
 import {
   completeFinanceSyncRun,
   createFinanceSyncRun,
@@ -79,7 +79,6 @@ export interface FinanceSyncExecutionResult {
 
 export interface FinanceXeroSyncConnection {
   tenantId: string;
-  tokenExpiresAt: Date;
   xero: XeroClient;
 }
 
@@ -170,12 +169,14 @@ function assertDatasets(datasets: FinanceSyncDatasetDefinition[]): void {
 }
 
 export async function createFinanceXeroSyncConnection(): Promise<FinanceXeroSyncConnection> {
-  const { xero, tenantId, tokenExpiresAt } =
-    await getAuthenticatedFinanceXeroClient();
+  // The finance dashboard now reads from the single operational Xero connection
+  // (the same one bookings, payments and subscriptions use). The dataset
+  // fetchers already meter their calls through callXeroApi, so only the
+  // authenticated client needs to come from the operational token store.
+  const { xero, tenantId } = await getAuthenticatedXeroClient();
 
   return {
     tenantId,
-    tokenExpiresAt,
     xero,
   };
 }
