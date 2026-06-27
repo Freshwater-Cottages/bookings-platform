@@ -46,7 +46,10 @@ human review of the plan and resulting PR before merge.
 Low and medium issues may be suitable for an autonomous local run only when the
 issue has complete scope and validation commands and does not touch money
 movement, booking capacity, membership lifecycle, live providers, schema,
-production config, or deployment behavior.
+production config, or deployment behavior. Such eligible runs may also push,
+monitor CI to green, and merge their own PR with a merge commit per the
+`AGENTS.md` "Completion and Merge" risk gate. High and critical PRs always wait
+for explicit owner approval before merge.
 
 ## Conflict Handling
 
@@ -60,6 +63,7 @@ If an issue conflicts with repo docs or code reality:
 ## Evidence Comment
 
 After opening a PR, comment on the issue with branch, PR URL, summary, tests,
-validation commands, commands not run, manual checks, residual risks, and
-confirmation that no production credentials, production data, live providers, or
-live webhooks were used.
+validation commands, commands not run, manual checks, residual risks, whether the
+PR is eligible for autonomous merge or held for owner approval, and confirmation
+that no production credentials, production data, live providers, or live webhooks
+were used.
