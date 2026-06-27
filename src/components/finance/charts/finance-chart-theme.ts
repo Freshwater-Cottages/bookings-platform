@@ -27,7 +27,7 @@ export const FINANCE_MIX_COLORS = [
   "#d9d5c2",
 ] as const;
 
-export type FinanceValueType = "currency" | "count" | "percent";
+export type FinanceValueType = "currency" | "count" | "percent" | "ratio";
 
 const wholeNumber = new Intl.NumberFormat("en-NZ", {
   maximumFractionDigits: 0,
@@ -37,6 +37,13 @@ const percentFormatter = new Intl.NumberFormat("en-NZ", {
   style: "percent",
   minimumFractionDigits: 1,
   maximumFractionDigits: 1,
+});
+
+// Ratios (e.g. the current ratio) are not integers; show two decimal places so
+// values like 1.35 are not rounded to "1".
+const ratioFormatter = new Intl.NumberFormat("en-NZ", {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
 });
 
 /** Full-precision value for tooltips and labels. */
@@ -49,6 +56,8 @@ export function formatFinanceValue(
       return formatCents(value);
     case "percent":
       return percentFormatter.format(value);
+    case "ratio":
+      return ratioFormatter.format(value);
     case "count":
     default:
       return wholeNumber.format(value);
@@ -62,6 +71,10 @@ export function formatFinanceAxisTick(
 ): string {
   if (valueType === "percent") {
     return percentFormatter.format(value);
+  }
+
+  if (valueType === "ratio") {
+    return ratioFormatter.format(value);
   }
 
   if (valueType === "currency") {

@@ -384,7 +384,7 @@ export default async function FinanceWorkingCapitalPage({
                       key: "currentRatio",
                       name: "Current ratio",
                       color: FINANCE_SERIES_COLORS.accent,
-                      valueType: "count",
+                      valueType: "ratio",
                     },
                   ]}
                   emptyMessage="No current-ratio data is available yet."

@@ -47,6 +47,11 @@ export function MixPieChart({
   }
 
   const total = positive.reduce((sum, datum) => sum + datum.value, 0);
+  // A pie cannot render zero/negative slices, so they are excluded from the
+  // chart and its percentage base. Surface the count so the chart is not
+  // silently inconsistent with the table beside it (e.g. an income reversal
+  // line). The table remains the complete, signed record.
+  const omittedCount = data.length - positive.length;
 
   const renderTooltip = ({
     active,
@@ -73,31 +78,40 @@ export function MixPieChart({
   };
 
   return (
-    <div className="h-[300px] print:h-[220px]" style={{ height }}>
-      <ResponsiveContainer width="100%" height="100%">
-        <PieChart>
-          <Pie
-            data={positive}
-            dataKey="value"
-            nameKey="name"
-            innerRadius={55}
-            outerRadius={90}
-            paddingAngle={3}
-            label={({ name, percent }) =>
-              `${name} (${((percent ?? 0) * 100).toFixed(0)}%)`
-            }
-            labelLine={false}
-          >
-            {positive.map((datum, index) => (
-              <Cell
-                key={datum.name}
-                fill={colors[index % colors.length]}
-              />
-            ))}
-          </Pie>
-          <Tooltip content={renderTooltip} />
-        </PieChart>
-      </ResponsiveContainer>
+    <div>
+      <div className="h-[300px] print:h-[220px]" style={{ height }}>
+        <ResponsiveContainer width="100%" height="100%">
+          <PieChart>
+            <Pie
+              data={positive}
+              dataKey="value"
+              nameKey="name"
+              innerRadius={55}
+              outerRadius={90}
+              paddingAngle={3}
+              label={({ name, percent }) =>
+                `${name} (${((percent ?? 0) * 100).toFixed(0)}%)`
+              }
+              labelLine={false}
+            >
+              {positive.map((datum, index) => (
+                <Cell
+                  key={datum.name}
+                  fill={colors[index % colors.length]}
+                />
+              ))}
+            </Pie>
+            <Tooltip content={renderTooltip} />
+          </PieChart>
+        </ResponsiveContainer>
+      </div>
+      {omittedCount > 0 ? (
+        <p className="mt-2 text-center text-xs text-slate-500">
+          {omittedCount} line{omittedCount === 1 ? "" : "s"} with a zero or
+          negative amount {omittedCount === 1 ? "is" : "are"} not shown; see the
+          table for the full breakdown.
+        </p>
+      ) : null}
     </div>
   );
 }

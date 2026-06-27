@@ -15,7 +15,6 @@ import {
 import {
   extractPnlLineItems,
   findPnlSection,
-  readPnlPeriodLabel,
   readPnlReportPayload,
 } from "@/lib/finance-pnl-snapshot";
 import { formatCents } from "@/lib/utils";

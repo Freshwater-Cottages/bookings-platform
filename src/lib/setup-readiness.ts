@@ -141,7 +141,7 @@ const CATEGORY_META: Record<
   },
   finance: {
     title: "Finance",
-    description: "Finance Xero connection and Xero chart/item mappings.",
+    description: "Finance dashboard module and Xero chart/item mappings.",
   },
 };
 
