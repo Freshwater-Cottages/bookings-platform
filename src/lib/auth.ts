@@ -4,6 +4,7 @@ import bcrypt from "bcryptjs";
 import { prisma } from "./prisma";
 import { getAuthSecret, getAuthTrustHost } from "./runtime-config";
 import logger from "./logger";
+import type { AppRole } from "./member-roles";
 
 class EmailNotVerifiedError extends CredentialsSignin {
   code = "EMAIL_NOT_VERIFIED";
@@ -35,14 +36,14 @@ declare module "next-auth" {
       id: string;
       email: string;
       name: string;
-      role: "MEMBER" | "ADMIN" | "LODGE" | "ASSOCIATE" | "LIFE";
+      role: AppRole;
       forcePasswordChange: boolean;
       isEmailVerified: boolean;
       sessionInvalidated?: boolean;
     };
   }
   interface User {
-    role: "MEMBER" | "ADMIN" | "LODGE" | "ASSOCIATE" | "LIFE";
+    role: AppRole;
     forcePasswordChange: boolean;
     isEmailVerified: boolean;
   }
@@ -163,7 +164,7 @@ export const authConfig = {
       return token;
     },
     async session({ session, token }) {
-      session.user.role = token.role as "MEMBER" | "ADMIN" | "LODGE" | "ASSOCIATE" | "LIFE";
+      session.user.role = token.role as AppRole;
       session.user.id = token.id as string;
       session.user.forcePasswordChange = token.forcePasswordChange as boolean;
       session.user.isEmailVerified = token.isEmailVerified as boolean;

@@ -7,6 +7,7 @@ import {
   type SignerContext,
 } from "@/lib/induction";
 import { INDUCTION_SIGN_OFF_DECLARATION } from "@/lib/induction-checklist-template";
+import { isMemberLevelRole } from "@/lib/member-roles";
 import { requireActiveSession } from "@/lib/session-guards";
 
 export async function GET(
@@ -21,7 +22,9 @@ export async function GET(
   const ctx: SignerContext = {
     memberId,
     isAdmin: guard.session.user.role === "ADMIN",
-    isHutLeader: await hasActiveHutLeaderAssignment(memberId),
+    isHutLeader:
+      isMemberLevelRole(guard.session.user.role) &&
+      (await hasActiveHutLeaderAssignment(memberId)),
   };
 
   const induction = await getInductionById(id);

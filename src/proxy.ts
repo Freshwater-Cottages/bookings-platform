@@ -12,6 +12,7 @@ import {
   CSP_NONCE_HEADER,
   setSecurityHeaders,
 } from "./lib/csp";
+import { REQUEST_PATH_HEADER } from "./lib/internal-return-path";
 
 export function getFeatureFlagBlockResponse(
   pathname: string,
@@ -58,6 +59,10 @@ export async function proxy(request: NextRequest) {
 
   requestHeaders.set(CSP_NONCE_HEADER, nonce);
   requestHeaders.set(CSP_HEADER, csp);
+  requestHeaders.set(
+    REQUEST_PATH_HEADER,
+    `${request.nextUrl.pathname}${request.nextUrl.search}`
+  );
   requestHeaders.set("x-page-slug", pageSlug);
 
   const response = NextResponse.next({
@@ -99,6 +104,7 @@ export const config = {
     "/api/admin/mountain-conditions/:path*",
     "/api/admin/promo-codes/:path*",
     "/api/admin/roster/:path*",
+    "/api/admin/setup/finance-report-mappings/:path*",
     "/api/admin/waitlist/:path*",
     "/api/admin/work-parties/:path*",
     "/api/admin/xero/:path*",

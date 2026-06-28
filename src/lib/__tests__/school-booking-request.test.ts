@@ -432,4 +432,62 @@ describe("approveSchoolBookingRequest", () => {
       approveSchoolBookingRequest({ requestId: "req-school", adminMemberId: "admin-1" })
     ).rejects.toMatchObject({ status: 409 });
   });
+
+  it("regenerates guests, reprices, and snapshots the request when the admin varies the quantity", async () => {
+    mockedFindUnique.mockResolvedValue(schoolRequest() as never);
+
+    const result = await approveSchoolBookingRequest({
+      requestId: "req-school",
+      adminMemberId: "admin-1",
+      guestOverride: { childCounts: { CHILD: 4 } },
+    });
+
+    // 1 adult @ 5000 x2 + 4 children @ 2500 x2 = 10000 + 20000 = 30000.
+    expect(result).toMatchObject({ type: "approved", priceCents: 30000 });
+
+    // Booking holds the regenerated guest list (1 teacher + 4 children).
+    const bookingArgs = vi.mocked(prisma.booking.create).mock.calls[0][0].data as {
+      guests: { create: unknown[] };
+      finalPriceCents: number;
+    };
+    expect(bookingArgs.guests.create).toHaveLength(5);
+    expect(bookingArgs.finalPriceCents).toBe(30000);
+
+    // The request snapshot is updated to match what was booked.
+    const updateArgs = vi.mocked(prisma.bookingRequest.update).mock.calls.at(-1)?.[0]
+      .data as { guests?: unknown[] };
+    expect(updateArgs.guests).toHaveLength(5);
+  });
+
+  it("re-splits an officer-set price across the varied guest count", async () => {
+    mockedFindUnique.mockResolvedValue(
+      schoolRequest({ status: BookingRequestStatus.PRICED, priceCents: 30000 }) as never
+    );
+
+    const result = await approveSchoolBookingRequest({
+      requestId: "req-school",
+      adminMemberId: "admin-1",
+      guestOverride: { childCounts: { CHILD: 4 } },
+    });
+
+    // The negotiated total is preserved and split across the new 5 guests.
+    expect(result).toMatchObject({ priceCents: 30000 });
+    const bookingArgs = vi.mocked(prisma.booking.create).mock.calls[0][0].data as {
+      guests: { create: unknown[] };
+    };
+    expect(bookingArgs.guests.create).toHaveLength(5);
+  });
+
+  it("rejects a quantity override that exceeds the lodge capacity", async () => {
+    mockedFindUnique.mockResolvedValue(schoolRequest() as never);
+
+    await expect(
+      approveSchoolBookingRequest({
+        requestId: "req-school",
+        adminMemberId: "admin-1",
+        guestOverride: { childCounts: { CHILD: 50 } },
+      })
+    ).rejects.toMatchObject({ status: 422 });
+    expect(prisma.member.create).not.toHaveBeenCalled();
+  });
 });

@@ -9,6 +9,7 @@ import {
   type SignerContext,
 } from "@/lib/induction";
 import logger from "@/lib/logger";
+import { isMemberLevelRole } from "@/lib/member-roles";
 import { prisma } from "@/lib/prisma";
 import { requireActiveSession } from "@/lib/session-guards";
 
@@ -57,7 +58,9 @@ export async function POST(
   const ctx: SignerContext = {
     memberId,
     isAdmin: guard.session.user.role === "ADMIN",
-    isHutLeader: await hasActiveHutLeaderAssignment(memberId),
+    isHutLeader:
+      isMemberLevelRole(guard.session.user.role) &&
+      (await hasActiveHutLeaderAssignment(memberId)),
   };
 
   const induction = await getInductionById(id);

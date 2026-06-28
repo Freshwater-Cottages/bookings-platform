@@ -27,6 +27,7 @@ import { getResolvedAccountMapping } from "./xero-mappings";
 import { getSeasonStartMonth } from "@/lib/financial-year";
 import { loadMembershipLockoutSettings } from "@/lib/membership-lockout-settings";
 import { requiresPaidSubscriptionForAgeTierFromSettings } from "@/lib/member-subscription-eligibility";
+import { roleNeverRequiresSubscription } from "@/lib/member-subscription-defaults";
 import {
   getXeroSyncCursor,
   getXeroSyncCursorMetadata,
@@ -347,7 +348,7 @@ export async function checkMembershipStatus(
 
   const year = seasonYear ?? getSeasonYear(new Date());
   const subscriptionRequired =
-    member.role !== "ADMIN" &&
+    !roleNeverRequiresSubscription(member.role) &&
     (await requiresPaidSubscriptionForAgeTierFromSettings(member.ageTier));
 
   if (!subscriptionRequired) {

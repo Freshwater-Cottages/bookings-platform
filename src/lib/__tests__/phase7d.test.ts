@@ -195,7 +195,7 @@ describe("F8: Hut Leader Role Assignment", () => {
         user: { id: "admin1", role: "ADMIN", email: "support@example.org" },
       });
 
-      mockPrisma.member.findUnique.mockResolvedValue({ id: "m1", active: true });
+      mockPrisma.member.findUnique.mockResolvedValue({ id: "m1", active: true, role: "MEMBER" });
       mockPrisma.hutLeaderAssignment.findMany.mockResolvedValue([]);
       mockPrisma.hutLeaderAssignment.create.mockResolvedValue({ id: "new-assign" });
 
@@ -216,7 +216,7 @@ describe("F8: Hut Leader Role Assignment", () => {
         user: { id: "admin1", role: "ADMIN", email: "support@example.org" },
       });
 
-      mockPrisma.member.findUnique.mockResolvedValue({ id: "m1", active: true });
+      mockPrisma.member.findUnique.mockResolvedValue({ id: "m1", active: true, role: "MEMBER" });
       mockPrisma.hutLeaderAssignment.findMany.mockResolvedValue([{
         id: "existing",
         startDate: new Date("2026-07-08"),
@@ -242,7 +242,7 @@ describe("F8: Hut Leader Role Assignment", () => {
         user: { id: "admin1", role: "ADMIN", email: "support@example.org" },
       });
 
-      mockPrisma.member.findUnique.mockResolvedValue({ id: "m1", active: true });
+      mockPrisma.member.findUnique.mockResolvedValue({ id: "m1", active: true, role: "MEMBER" });
       // 1-day overlap is allowed for handover
       mockPrisma.hutLeaderAssignment.findMany.mockResolvedValue([]);
       mockPrisma.hutLeaderAssignment.create.mockResolvedValue({ id: "new-assign" });
@@ -254,6 +254,26 @@ describe("F8: Hut Leader Role Assignment", () => {
         makeRequest({ memberId: "m1", startDate: "2026-07-10", endDate: "2026-07-17" }) as any
       );
       expect(res.status).toBe(201);
+    });
+
+    it("rejects operational accounts for hut leader assignments", async () => {
+      mockAuth.mockResolvedValue({
+        user: { id: "admin1", role: "ADMIN", email: "support@example.org" },
+      });
+
+      mockPrisma.member.findUnique.mockResolvedValue({
+        id: "lodge1",
+        active: true,
+        role: "LODGE",
+      });
+
+      const { POST } = await import(
+        "@/app/api/admin/hut-leaders/route"
+      );
+      const res = await POST(
+        makeRequest({ memberId: "lodge1", startDate: "2026-07-10", endDate: "2026-07-17" }) as any
+      );
+      expect(res.status).toBe(404);
     });
 
     it("rejects when endDate before startDate", async () => {

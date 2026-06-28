@@ -10,6 +10,7 @@ import {
   generateHutLeaderPin,
   hashHutLeaderPin,
 } from "@/lib/lodge-pin-session";
+import { isMemberLevelRole } from "@/lib/member-roles";
 
 const createSchema = z.object({
   memberId: z.string().min(1),
@@ -77,11 +78,15 @@ export async function POST(req: NextRequest) {
       active: true,
       email: true,
       firstName: true,
+      role: true,
     },
   });
 
-  if (!member || !member.active) {
-    return NextResponse.json({ error: "Member not found or inactive" }, { status: 404 });
+  if (!member || !member.active || !isMemberLevelRole(member.role)) {
+    return NextResponse.json(
+      { error: "Member not found or not eligible for hut leader assignment" },
+      { status: 404 }
+    );
   }
 
   // Check for overlapping assignments — 1 day overlap allowed for handover, 2+ rejected

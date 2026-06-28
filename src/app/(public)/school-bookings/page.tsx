@@ -17,8 +17,10 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { useClubIdentity } from "@/components/club-identity-provider";
 import { useAgeTierOptions } from "@/lib/use-age-tier-options";
+import { SCHOOL_GROUP_SOFT_CAP } from "@/lib/school-booking-constants";
 
-// Schools request counts of children per age tier; teachers are named adults.
+// Schools request counts of children per age tier; teachers and parent helpers
+// are the named adults.
 const CHILD_TIERS: AgeTier[] = ["INFANT", "CHILD", "YOUTH"];
 
 interface TeacherInput {
@@ -66,6 +68,9 @@ export default function SchoolBookingRequestPage() {
   const validTeachers = teachers.filter((t) => t.firstName.trim() && t.lastName.trim());
   const totalGuests = validTeachers.length + totalChildren;
   const datesValid = Boolean(checkIn && checkOut && checkOut > checkIn);
+  // Soft cap: a club member must host, so groups over 25 may be declined. We
+  // warn but still allow submission up to the lodge capacity.
+  const overSoftCap = totalGuests > SCHOOL_GROUP_SOFT_CAP;
 
   function updateTeacher(index: number, field: keyof TeacherInput, value: string) {
     setTeachers((prev) => prev.map((t, i) => (i === index ? { ...t, [field]: value } : t)));
@@ -97,7 +102,7 @@ export default function SchoolBookingRequestPage() {
       return;
     }
     if (validTeachers.length === 0) {
-      setError("Please add at least one teacher with a name.");
+      setError("Please add at least one teacher or parent helper with a name.");
       return;
     }
     if (totalChildren === 0) {
@@ -288,14 +293,14 @@ export default function SchoolBookingRequestPage() {
 
           <div className="space-y-3">
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold">Teachers attending (hut leaders)</h3>
+              <h3 className="text-sm font-semibold">Teachers &amp; parent helpers (hut leaders)</h3>
               <Button type="button" variant="outline" size="sm" onClick={addTeacher}>
-                + Add Teacher
+                + Add adult
               </Button>
             </div>
             <p className="text-xs text-muted-foreground">
-              Each teacher is set up as a hut leader and emailed their kiosk PIN. If no email is
-              given, the PIN goes to the contact email above.
+              Each teacher or parent helper is set up as a hut leader and emailed their kiosk PIN. If
+              no email is given, the PIN goes to the contact email above.
             </p>
 
             {teachers.map((teacher, index) => (
@@ -358,9 +363,18 @@ export default function SchoolBookingRequestPage() {
               ))}
             </div>
             <p className="text-sm text-muted-foreground">
-              Total guests: {totalGuests} / {club.lodgeCapacity} max ({validTeachers.length} teachers,
-              {" "}{totalChildren} children)
+              Total guests: {totalGuests} / {club.lodgeCapacity} max ({validTeachers.length} teachers
+              {" "}&amp; helpers, {totalChildren} children)
             </p>
+            {overSoftCap ? (
+              <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                School groups are capped at {SCHOOL_GROUP_SOFT_CAP} beds (students plus teachers and
+                parent helpers) unless the remaining beds, up to the lodge&apos;s {club.lodgeCapacity},{" "}
+                include a club member staying with your group. Requests over {SCHOOL_GROUP_SOFT_CAP}{" "}
+                may be declined until a member is confirmed to host. You can still submit and
+                we&apos;ll be in touch.
+              </p>
+            ) : null}
           </div>
 
           <div className="space-y-1">

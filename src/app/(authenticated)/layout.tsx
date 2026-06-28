@@ -10,8 +10,11 @@ import { hasActiveHutLeaderAssignment } from "@/lib/hut-leader";
 import { ReportIssueWidget } from "@/components/report-issue-widget";
 import { clubIdentity } from "@/config/club-identity";
 import { hasFinanceViewerAccess } from "@/lib/finance-auth";
+import { buildLoginPath } from "@/lib/auth-redirect";
+import { REQUEST_PATH_HEADER } from "@/lib/internal-return-path";
 import { CSP_NONCE_HEADER } from "@/lib/csp";
 import { getLodgeCapacity } from "@/lib/lodge-capacity";
+import { isMemberLevelRole } from "@/lib/member-roles";
 import {
   MEMBER_ONBOARDING_GATE_SELECT,
   shouldShowMemberOnboarding,
@@ -25,7 +28,10 @@ export default async function AuthenticatedLayout({
   const session = await auth();
 
   if (!session?.user) {
-    redirect("/login");
+    // Send the visitor to login, preserving where they were headed so they
+    // return there after signing in.
+    const requestedPath = (await headers()).get(REQUEST_PATH_HEADER);
+    redirect(buildLoginPath(requestedPath));
   }
 
   // LODGE accounts can only access /lodge/* routes
@@ -49,7 +55,7 @@ export default async function AuthenticatedLayout({
   }
 
   const isHutLeaderActive =
-    session.user.role === "MEMBER"
+    isMemberLevelRole(session.user.role)
       ? await hasActiveHutLeaderAssignment(session.user.id)
       : false;
 
@@ -60,7 +66,7 @@ export default async function AuthenticatedLayout({
   tomorrow.setDate(tomorrow.getDate() + 1);
 
   let isStayingGuest = false;
-  if (session.user.role === "MEMBER" && !isHutLeaderActive) {
+  if (isMemberLevelRole(session.user.role) && !isHutLeaderActive) {
     const stayingBooking = await prisma.booking.findFirst({
       where: {
         memberId: session.user.id,

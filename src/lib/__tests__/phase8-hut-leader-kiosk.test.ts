@@ -88,6 +88,7 @@ describe("Phase 8: Hut Leader & Kiosk Improvements", () => {
     mockPrisma.member.findUnique.mockResolvedValue({
       id: "member-1",
       active: true,
+      role: "MEMBER",
       email: "alice@example.com",
       firstName: "Alice",
     });
