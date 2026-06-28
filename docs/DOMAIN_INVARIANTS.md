@@ -68,11 +68,16 @@ committee/contact presentation only. The `Member.role` axis also carries two
 non-member classification values, `NON_MEMBER` and `SCHOOL`, used by the
 booking-request flows for non-login records; these grant no access, stay out of
 member rosters, and never owe a subscription. Do not add committee positions to
-`Member.role`, and do not make booking, subscription, or Xero behavior depend on
-membership type until the explicit enforcement issue changes those paths.
+`Member.role`. `CommitteeRole` master records and `CommitteeAssignment`
+member links can be active/inactive independently of access role and seasonal
+membership type, and newly linked assignments are hidden until explicitly
+published by an admin. Booking pricing, booking block checks, and effective
+subscription lockout may depend on the member's seasonal membership type for the
+booking season; application access and committee presentation must not.
 Seasonal membership type changes require a guarded admin preview and reasoned
 audit record. Existing future bookings are not automatically repriced by a type
-change.
+change, and raw subscription, payment, and Xero history must remain intact even
+when the effective subscription status is `NOT_REQUIRED`.
 
 Pending nomination states must have an expiry, reminder, admin refresh,
 replacement, rejection, or other documented recovery path so applications do

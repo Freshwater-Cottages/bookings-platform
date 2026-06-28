@@ -3,7 +3,10 @@ import { NextRequest } from "next/server";
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
-    member: { count: vi.fn() },
+    $transaction: vi.fn(async (callback: (tx: unknown) => unknown) =>
+      callback((await import("@/lib/prisma")).prisma)
+    ),
+    member: { count: vi.fn(), findUnique: vi.fn() },
     committeeMember: {
       findMany: vi.fn(),
       findUnique: vi.fn(),
@@ -12,6 +15,22 @@ vi.mock("@/lib/prisma", () => ({
       update: vi.fn(),
       delete: vi.fn(),
     },
+    committeeRole: {
+      findMany: vi.fn(),
+      findUnique: vi.fn(),
+      findFirst: vi.fn(),
+      create: vi.fn(),
+      update: vi.fn(),
+      delete: vi.fn(),
+    },
+    committeeAssignment: {
+      findMany: vi.fn(),
+      findFirst: vi.fn(),
+      findUnique: vi.fn(),
+      create: vi.fn(),
+      update: vi.fn(),
+    },
+    auditLog: { create: vi.fn() },
   },
 }));
 
@@ -22,7 +41,15 @@ vi.mock("@/lib/session-guards", () => ({
     (await import("./helpers/require-admin-mock")).evaluateRequireAdminMock(),
   requireActiveSessionUser: (...args: unknown[]) => mockRequireActiveSessionUser(...args),
 }));
-vi.mock("@/lib/audit", () => ({ logAudit: vi.fn() }));
+vi.mock("@/lib/audit", () => ({
+  logAudit: vi.fn(),
+  buildStructuredAuditLogCreateArgs: vi.fn((event) => ({ data: event })),
+  getAuditRequestContext: vi.fn(() => ({
+    id: null,
+    ipAddress: "unknown",
+    userAgent: null,
+  })),
+}));
 vi.mock("@/lib/logger", () => ({
   default: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
@@ -39,6 +66,10 @@ import { sendEmail } from "@/lib/email";
 import { CLUB_CONTACT_EMAIL } from "@/config/club-identity";
 import { GET as listMembers, POST as createMember } from "@/app/api/admin/committee/route";
 import { PUT as updateMember, DELETE as deleteMember } from "@/app/api/admin/committee/[id]/route";
+import { GET as listRoles, POST as createRole } from "@/app/api/admin/committee/roles/route";
+import { PATCH as updateRole, DELETE as deleteRole } from "@/app/api/admin/committee/roles/[id]/route";
+import { GET as listAssignments, POST as createAssignment } from "@/app/api/admin/committee/assignments/route";
+import { PATCH as updateAssignment, DELETE as deleteAssignment } from "@/app/api/admin/committee/assignments/[id]/route";
 
 const mockedAuth = vi.mocked(auth);
 
@@ -57,6 +88,51 @@ const sampleMember = {
   active: true,
   createdAt: new Date("2026-01-01"),
   updatedAt: new Date("2026-01-01"),
+};
+
+const sampleRole = {
+  id: "role1",
+  key: "president",
+  name: "President",
+  description: "Chairs meetings.",
+  isActive: true,
+  sortOrder: 0,
+  createdAt: new Date("2026-01-01"),
+  updatedAt: new Date("2026-01-01"),
+  _count: { assignments: 2 },
+};
+
+const sampleAssignment = {
+  id: "assign1",
+  memberId: "member1",
+  committeeRoleId: "role1",
+  blurb: "Current president.",
+  sortOrder: 0,
+  published: false,
+  showPhone: false,
+  contactable: false,
+  isActive: true,
+  assignedByMemberId: "admin1",
+  createdAt: new Date("2026-01-01"),
+  updatedAt: new Date("2026-01-01"),
+  committeeRole: sampleRole,
+  member: {
+    id: "member1",
+    firstName: "Alex",
+    lastName: "Admin",
+    email: "alex@example.org",
+    phoneCountryCode: "64",
+    phoneAreaCode: "21",
+    phoneNumber: "123456",
+    role: "ADMIN",
+    active: true,
+  },
+  assignedBy: {
+    id: "admin1",
+    firstName: "Root",
+    lastName: "Admin",
+    email: "root@example.org",
+  },
 };
 
 describe("Committee Admin API - GET /api/admin/committee", () => {
@@ -327,34 +403,373 @@ describe("Committee Admin API - DELETE /api/admin/committee/[id]", () => {
   });
 });
 
+describe("Committee Master Role API", () => {
+  beforeEach(() => { vi.clearAllMocks(); });
+
+  const makeParams = (id: string) => Promise.resolve({ id });
+
+  it("lists reusable committee roles for admins", async () => {
+    mockedAuth.mockResolvedValue(adminSession);
+    vi.mocked(prisma.committeeRole.findMany).mockResolvedValue([sampleRole] as any);
+
+    const res = await listRoles();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.roles).toHaveLength(1);
+    expect(body.roles[0]).toMatchObject({
+      id: "role1",
+      key: "president",
+      name: "President",
+      assignmentCount: 2,
+    });
+  });
+
+  it("creates a committee role with a unique key and audit record", async () => {
+    mockedAuth.mockResolvedValue(adminSession);
+    vi.mocked(prisma.committeeRole.findUnique).mockResolvedValue(null);
+    vi.mocked(prisma.committeeRole.findFirst).mockResolvedValue({ sortOrder: 4 } as any);
+    vi.mocked(prisma.committeeRole.create).mockResolvedValue({
+      ...sampleRole,
+      id: "role2",
+      key: "trip-leader",
+      name: "Trip Leader",
+      sortOrder: 5,
+      _count: { assignments: 0 },
+    } as any);
+
+    const req = new NextRequest("http://localhost/api/admin/committee/roles", {
+      method: "POST",
+      body: JSON.stringify({ name: "Trip Leader", description: "Trips" }),
+    });
+
+    const res = await createRole(req);
+    expect(res.status).toBe(201);
+    expect(prisma.committeeRole.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          key: "trip-leader",
+          name: "Trip Leader",
+          sortOrder: 5,
+        }),
+      }),
+    );
+    expect(prisma.auditLog.create).toHaveBeenCalledOnce();
+  });
+
+  it("archives committee roles instead of adding committee to Member.role", async () => {
+    mockedAuth.mockResolvedValue(adminSession);
+    vi.mocked(prisma.committeeRole.findUnique).mockResolvedValue(sampleRole as any);
+    vi.mocked(prisma.committeeRole.update).mockResolvedValue({
+      ...sampleRole,
+      isActive: false,
+    } as any);
+
+    const req = new NextRequest("http://localhost/api/admin/committee/roles/role1", {
+      method: "PATCH",
+      body: JSON.stringify({ isActive: false }),
+    });
+    const res = await updateRole(req, { params: makeParams("role1") });
+
+    expect(res.status).toBe(200);
+    expect(prisma.committeeRole.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "role1" },
+        data: expect.objectContaining({ isActive: false }),
+      }),
+    );
+    expect(prisma.auditLog.create).toHaveBeenCalledOnce();
+  });
+
+  it("blocks deleting roles that have assignments", async () => {
+    mockedAuth.mockResolvedValue(adminSession);
+    vi.mocked(prisma.committeeRole.findUnique).mockResolvedValue(sampleRole as any);
+
+    const req = new NextRequest("http://localhost/api/admin/committee/roles/role1", {
+      method: "DELETE",
+    });
+    const res = await deleteRole(req, { params: makeParams("role1") });
+
+    expect(res.status).toBe(409);
+    expect(prisma.committeeRole.delete).not.toHaveBeenCalled();
+  });
+});
+
+describe("Committee Assignment API", () => {
+  beforeEach(() => { vi.clearAllMocks(); });
+
+  const makeParams = (id: string) => Promise.resolve({ id });
+
+  it("lists member-linked committee assignments without changing public committee source", async () => {
+    mockedAuth.mockResolvedValue(adminSession);
+    vi.mocked(prisma.committeeAssignment.findMany).mockResolvedValue([
+      sampleAssignment,
+    ] as any);
+
+    const req = new NextRequest(
+      "http://localhost/api/admin/committee/assignments?includeInactive=1",
+    );
+    const res = await listAssignments(req);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.assignments[0]).toMatchObject({
+      id: "assign1",
+      committeeRoleId: "role1",
+      member: { displayName: "Alex Admin" },
+      committeeRole: { name: "President" },
+    });
+    expect(prisma.committeeMember.findMany).not.toHaveBeenCalled();
+  });
+
+  it("creates initially hidden assignments and allows multiple members per role", async () => {
+    mockedAuth.mockResolvedValue(adminSession);
+    vi.mocked(prisma.member.findUnique).mockResolvedValue({
+      id: "member1",
+      firstName: "Alex",
+      lastName: "Admin",
+      email: "alex@example.org",
+    } as any);
+    vi.mocked(prisma.committeeRole.findUnique).mockResolvedValue({
+      id: "role1",
+      name: "President",
+      isActive: true,
+    } as any);
+    vi.mocked(prisma.committeeAssignment.findUnique).mockResolvedValue(null);
+    vi.mocked(prisma.committeeAssignment.create).mockResolvedValue(sampleAssignment as any);
+
+    const req = new NextRequest("http://localhost/api/admin/committee/assignments", {
+      method: "POST",
+      body: JSON.stringify({
+        memberId: "member1",
+        committeeRoleId: "role1",
+        blurb: "Current president.",
+      }),
+    });
+    const res = await createAssignment(req);
+
+    expect(res.status).toBe(201);
+    expect(prisma.committeeAssignment.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          memberId_committeeRoleId: {
+            memberId: "member1",
+            committeeRoleId: "role1",
+          },
+        },
+      }),
+    );
+    expect(prisma.committeeAssignment.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          memberId: "member1",
+          committeeRoleId: "role1",
+          published: false,
+          showPhone: false,
+          contactable: false,
+        }),
+      }),
+    );
+    expect(prisma.auditLog.create).toHaveBeenCalledOnce();
+  });
+
+  it("updates an existing member-role assignment instead of duplicating it", async () => {
+    mockedAuth.mockResolvedValue(adminSession);
+    vi.mocked(prisma.member.findUnique).mockResolvedValue({
+      id: "member1",
+      firstName: "Alex",
+      lastName: "Admin",
+      email: "alex@example.org",
+    } as any);
+    vi.mocked(prisma.committeeRole.findUnique).mockResolvedValue({
+      id: "role1",
+      name: "President",
+      isActive: true,
+    } as any);
+    vi.mocked(prisma.committeeAssignment.findUnique).mockResolvedValue(
+      sampleAssignment as any,
+    );
+    vi.mocked(prisma.committeeAssignment.update).mockResolvedValue({
+      ...sampleAssignment,
+      published: true,
+    } as any);
+
+    const req = new NextRequest("http://localhost/api/admin/committee/assignments", {
+      method: "POST",
+      body: JSON.stringify({
+        memberId: "member1",
+        committeeRoleId: "role1",
+        published: true,
+      }),
+    });
+    const res = await createAssignment(req);
+
+    expect(res.status).toBe(201);
+    expect(prisma.committeeAssignment.create).not.toHaveBeenCalled();
+    expect(prisma.committeeAssignment.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "assign1" } }),
+    );
+  });
+
+  it("deactivates assignments and clears public/contact flags", async () => {
+    mockedAuth.mockResolvedValue(adminSession);
+    vi.mocked(prisma.committeeAssignment.findUnique).mockResolvedValue({
+      ...sampleAssignment,
+      published: true,
+      showPhone: true,
+      contactable: true,
+    } as any);
+    vi.mocked(prisma.committeeAssignment.update).mockResolvedValue({
+      ...sampleAssignment,
+      published: false,
+      showPhone: false,
+      contactable: false,
+      isActive: false,
+    } as any);
+
+    const req = new NextRequest(
+      "http://localhost/api/admin/committee/assignments/assign1",
+      { method: "DELETE" },
+    );
+    const res = await deleteAssignment(req, { params: makeParams("assign1") });
+
+    expect(res.status).toBe(200);
+    expect(prisma.committeeAssignment.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "assign1" },
+        data: expect.objectContaining({
+          isActive: false,
+          published: false,
+          showPhone: false,
+          contactable: false,
+        }),
+      }),
+    );
+  });
+
+  it("updates assignment presentation controls", async () => {
+    mockedAuth.mockResolvedValue(adminSession);
+    vi.mocked(prisma.committeeAssignment.findUnique).mockResolvedValue(
+      sampleAssignment as any,
+    );
+    vi.mocked(prisma.committeeAssignment.update).mockResolvedValue({
+      ...sampleAssignment,
+      published: true,
+      showPhone: true,
+      contactable: true,
+    } as any);
+
+    const req = new NextRequest(
+      "http://localhost/api/admin/committee/assignments/assign1",
+      {
+        method: "PATCH",
+        body: JSON.stringify({
+          published: true,
+          showPhone: true,
+          contactable: true,
+          sortOrder: 2,
+        }),
+      },
+    );
+    const res = await updateAssignment(req, { params: makeParams("assign1") });
+
+    expect(res.status).toBe(200);
+    expect(prisma.committeeAssignment.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          published: true,
+          showPhone: true,
+          contactable: true,
+          sortOrder: 2,
+        }),
+      }),
+    );
+  });
+});
+
 describe("Committee Public API - GET /api/committee", () => {
-  it("returns only active members", async () => {
+  beforeEach(() => { vi.clearAllMocks(); });
+
+  it("returns only published assignment presentation fields without email", async () => {
     const { GET } = await import("@/app/api/committee/route");
-    vi.mocked(prisma.committeeMember.findMany).mockResolvedValue([
-      { ...sampleMember, id: "cm1" },
-      { ...sampleMember, id: "cm2", role: "Secretary", name: "Jane Doe" },
+    vi.mocked(prisma.committeeAssignment.findMany).mockResolvedValue([
+      {
+        ...sampleAssignment,
+        id: "assign1",
+        published: true,
+        showPhone: false,
+        contactable: false,
+      },
+      {
+        ...sampleAssignment,
+        id: "assign2",
+        blurb: null,
+        published: true,
+        showPhone: true,
+        contactable: true,
+        committeeRole: {
+          ...sampleRole,
+          key: "secretary",
+          name: "Secretary",
+          description: "Keeps club records.",
+        },
+        member: {
+          ...sampleAssignment.member,
+          firstName: "Jamie",
+          lastName: "Jones",
+          email: "private-secretary@example.org",
+          phoneCountryCode: "+64",
+          phoneAreaCode: "27",
+          phoneNumber: "555 0100",
+        },
+      },
     ] as any);
 
     const res = await GET();
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.members).toHaveLength(2);
+    expect(JSON.stringify(body)).not.toContain("example.org");
+    expect(body.members[0]).toMatchObject({
+      id: "assign1",
+      role: "President",
+      roleKey: "president",
+      name: "Alex Admin",
+      phone: null,
+      contactKey: null,
+      description: "Current president.",
+    });
+    expect(body.members[1]).toMatchObject({
+      id: "assign2",
+      role: "Secretary",
+      roleKey: "secretary",
+      name: "Jamie Jones",
+      phone: "+64 27 555 0100",
+      contactKey: "assign2",
+      description: "Keeps club records.",
+    });
 
-    // Verify the query filtered by active
-    expect(prisma.committeeMember.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { active: true } })
+    expect(prisma.committeeAssignment.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          isActive: true,
+          published: true,
+          committeeRole: { isActive: true },
+          member: { active: true },
+        },
+        take: 50,
+      })
     );
+    expect(prisma.committeeMember.findMany).not.toHaveBeenCalled();
   });
 });
 
 describe("Contact API - recipient lookup from database", () => {
   beforeEach(() => { vi.clearAllMocks(); });
 
-  it("sends to committee member email when recipient matches contactKey", async () => {
+  it("sends to member email when recipient matches a published contactable assignment", async () => {
     const { POST } = await import("@/app/api/contact/route");
-    vi.mocked(prisma.committeeMember.findFirst).mockResolvedValue({
-      email: "president@example.org",
-      role: "President",
+    vi.mocked(prisma.committeeAssignment.findFirst).mockResolvedValue({
+      committeeRole: { name: "President" },
+      member: { email: "president@example.org" },
     } as any);
 
     const req = new Request("http://localhost/api/contact", {
@@ -364,28 +779,39 @@ describe("Contact API - recipient lookup from database", () => {
         name: "Test User",
         email: "test@example.com",
         message: "Hello",
-        recipient: "president",
+        recipient: "assign1",
       }),
     });
 
     const res = await POST(req);
     expect(res.status).toBe(200);
 
-    // Verify DB lookup was called with correct contactKey
-    expect(prisma.committeeMember.findFirst).toHaveBeenCalledWith({
-      where: { contactKey: "president", active: true },
-      select: { email: true, role: true },
+    expect(prisma.committeeAssignment.findFirst).toHaveBeenCalledWith({
+      where: {
+        id: "assign1",
+        isActive: true,
+        published: true,
+        contactable: true,
+        committeeRole: { isActive: true },
+        member: { active: true },
+      },
+      select: {
+        committeeRole: { select: { name: true } },
+        member: { select: { email: true } },
+      },
     });
 
-    // Verify email was sent to the committee member's email
     expect(sendEmail).toHaveBeenCalledWith(
-      expect.objectContaining({ to: "president@example.org" })
+      expect.objectContaining({
+        to: "president@example.org",
+        subject: "Website Contact (to President): Test User",
+      })
     );
   });
 
-  it("falls back to CONTACT_EMAIL when no matching committee member", async () => {
+  it("falls back to CONTACT_EMAIL when no contactable published assignment matches", async () => {
     const { POST } = await import("@/app/api/contact/route");
-    vi.mocked(prisma.committeeMember.findFirst).mockResolvedValue(null);
+    vi.mocked(prisma.committeeAssignment.findFirst).mockResolvedValue(null);
 
     const req = new Request("http://localhost/api/contact", {
       method: "POST",
@@ -401,9 +827,46 @@ describe("Contact API - recipient lookup from database", () => {
     const res = await POST(req);
     expect(res.status).toBe(200);
 
-    // Falls back to default CONTACT_EMAIL
+    expect(prisma.committeeAssignment.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          id: "unknown",
+          published: true,
+          contactable: true,
+        }),
+      })
+    );
     expect(sendEmail).toHaveBeenCalledWith(
       expect.objectContaining({ to: CLUB_CONTACT_EMAIL })
+    );
+  });
+
+  it("sanitizes committee role labels before adding them to the email subject", async () => {
+    const { POST } = await import("@/app/api/contact/route");
+    vi.mocked(prisma.committeeAssignment.findFirst).mockResolvedValue({
+      committeeRole: { name: "President\r\nBcc: attacker@example.org" },
+      member: { email: "president@example.org" },
+    } as any);
+
+    const req = new Request("http://localhost/api/contact", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Test User",
+        email: "test@example.com",
+        message: "Hello",
+        recipient: "assign1",
+      }),
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+
+    expect(sendEmail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        subject:
+          "Website Contact (to President Bcc: attacker@example.org): Test User",
+      })
     );
   });
 
@@ -423,8 +886,7 @@ describe("Contact API - recipient lookup from database", () => {
     const res = await POST(req);
     expect(res.status).toBe(200);
 
-    // No DB lookup when no recipient
-    expect(prisma.committeeMember.findFirst).not.toHaveBeenCalled();
+    expect(prisma.committeeAssignment.findFirst).not.toHaveBeenCalled();
 
     expect(sendEmail).toHaveBeenCalledWith(
       expect.objectContaining({ to: CLUB_CONTACT_EMAIL })

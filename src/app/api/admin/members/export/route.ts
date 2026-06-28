@@ -81,6 +81,14 @@ export async function GET(req: NextRequest) {
   );
   const notRequiredSubscriptionConditions = [
     { role: { in: [...OPERATIONAL_ROLE_VALUES, ...NON_MEMBER_ROLE_VALUES] } },
+    {
+      seasonalMembershipAssignments: {
+        some: {
+          seasonYear: currentSeasonYear,
+          membershipType: { subscriptionBehavior: "NOT_REQUIRED" },
+        },
+      },
+    },
     ...(notRequiredAgeTiers.size > 0
       ? [{ ageTier: { in: Array.from(notRequiredAgeTiers) } }]
       : []),
@@ -195,7 +203,8 @@ export async function GET(req: NextRequest) {
     andConditions.push({ OR: notRequiredSubscriptionConditions });
   } else if (subscriptionFilter === "NONE") {
     andConditions.push(
-      { role: { notIn: [...OPERATIONAL_ROLE_VALUES, ...NON_MEMBER_ROLE_VALUES] } },
+      { role: { notIn: [...OPERATIONAL_ROLE_VALUES] } },
+      { NOT: { OR: notRequiredSubscriptionConditions } },
       {
         subscriptions: { none: { seasonYear: currentSeasonYear } },
       },
@@ -207,7 +216,8 @@ export async function GET(req: NextRequest) {
     )
   ) {
     andConditions.push(
-      { role: { notIn: [...OPERATIONAL_ROLE_VALUES, ...NON_MEMBER_ROLE_VALUES] } },
+      { role: { notIn: [...OPERATIONAL_ROLE_VALUES] } },
+      { NOT: { OR: notRequiredSubscriptionConditions } },
       {
         subscriptions: {
           some: { seasonYear: currentSeasonYear, status: subscriptionFilter },
@@ -265,6 +275,15 @@ export async function GET(req: NextRequest) {
         subscriptions: {
           where: { seasonYear: currentSeasonYear },
           select: { status: true },
+          take: 1,
+        },
+        seasonalMembershipAssignments: {
+          where: { seasonYear: currentSeasonYear },
+          select: {
+            membershipType: {
+              select: { subscriptionBehavior: true },
+            },
+          },
           take: 1,
         },
       },
@@ -369,7 +388,12 @@ export async function GET(req: NextRequest) {
         {
           header: "Subscription Status",
           value: (m: MemberRow) =>
-            roleNeverRequiresSubscription(m.role) || notRequiredAgeTiers.has(m.ageTier)
+            roleNeverRequiresSubscription(m.role) ||
+            notRequiredAgeTiers.has(m.ageTier) ||
+            (m.seasonalMembershipAssignments ?? []).some(
+              (assignment) =>
+                assignment.membershipType.subscriptionBehavior === "NOT_REQUIRED",
+            )
               ? "NOT_REQUIRED"
               : m.subscriptions[0]?.status || "NONE",
         },

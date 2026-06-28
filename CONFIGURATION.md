@@ -268,21 +268,63 @@ assignment are separate axes:
 - Admin member detail pages show access role separately from seasonal
   membership type. Changing the seasonal type requires a preview and admin
   reason; the preview counts future confirmed bookings, drafts, waitlist
-  records, and subscription history before the save is audited.
+  records, and subscription history before the save is audited. Production
+  preview tokens require `AUTH_SECRET` or `NEXTAUTH_SECRET`; setup readiness
+  blocks when neither secret is configured.
 - `/admin/membership-types` includes an idempotent roll-forward tool that copies
   missing assignments from one season to another while leaving existing target
   assignments unchanged and flagging missing or inactive-type exceptions.
 - Committee assignment remains public/contact metadata and does not grant app
   access.
 
-The foundation does not change booking pricing, booking access, subscription
-lockout, Xero sync, or role-based authorization. `ADMIN` and `LODGE` are
-backfilled to the Full membership type for future policy alignment, but their
-current operational `NOT_REQUIRED` subscription behavior still comes from
-`roleNeverRequiresSubscription()` until the enforcement issue changes it.
-Seasonal membership type changes do not automatically reprice existing future
-bookings, rewrite subscription/Xero/payment history, or call external
-providers.
+## Committee Settings
+
+Committee settings are database-backed and managed from `/admin/committee`.
+`CommitteeRole` stores reusable master roles such as President, Secretary, or
+Booking Officer. `CommitteeAssignment` links a member to one of those roles and
+stores presentation controls: blurb, sort order, published, show-phone,
+contactable, and active/deactivated state. Multiple members can hold the same
+master role.
+
+Committee assignment is separate from `Member.role` and
+`SeasonalMembershipAssignment`; it never grants admin, lodge, booking, finance,
+or subscription privileges. Member detail pages show committee assignments in
+their own card alongside access role and seasonal membership type controls.
+
+Public committee and contact-form recipient data is derived from published,
+active `CommitteeAssignment` rows whose master role is also active. The public
+API returns the linked member's display name, the role name, the assignment
+blurb or role description, and an opaque assignment contact key only when the
+assignment is contactable. Member email addresses are never returned to the
+browser; `/api/contact` resolves contactable assignment keys server-side and
+falls back to the configured club contact address when no published,
+contactable assignment matches. Committee-routed contact emails use an opaque
+committee-contact marker in EmailLog rows instead of persisting the private
+member recipient address. Phone numbers come from the linked member profile and
+display only when the assignment's show-phone flag is enabled.
+
+The legacy `CommitteeMember` table remains editable for historical/public
+migration reference, but it no longer powers `/api/committee` or committee
+recipient routing. Seed and migration steps create master roles and hidden
+member-linked assignments where a legacy committee email exactly matches a
+member email, but they do not delete or blank existing legacy rows. Assignment
+changes and master role changes are audited with before/after metadata.
+
+Booking and subscription enforcement is season-aware:
+
+- `MEMBER_RATE` keeps normal member pricing for linked member guests.
+- `NON_MEMBER_RATE` prices the member at non-member nightly rates while keeping
+  the member identity on booking guests, audit records, and promo checks.
+- `BLOCK_BOOKING` prevents the member from booking as owner or linked member
+  guest and returns a structured policy error with safe member ids/names.
+- `NOT_REQUIRED` makes subscription lockout display and booking gates effective
+  `NOT_REQUIRED` for that season without deleting or hiding raw Xero invoice or
+  subscription history.
+
+`ADMIN` and `LODGE` operational subscription exemptions still come from
+`roleNeverRequiresSubscription()`. Seasonal membership type changes do not
+automatically reprice existing future bookings, rewrite
+subscription/Xero/payment history, or call external providers.
 
 ## Member Import And Addresses
 

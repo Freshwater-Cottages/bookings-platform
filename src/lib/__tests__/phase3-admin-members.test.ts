@@ -358,11 +358,16 @@ describe("Phase 3: Admin Member Management", () => {
         new NextRequest("http://localhost/api/admin/members?subscription=NONE")
       );
       const call = vi.mocked(prisma.member.findMany).mock.calls[0][0]!;
-      // NON_MEMBER and SCHOOL records never owe a subscription, so they must not
-      // surface alongside members in the "no subscription" filter.
-      expect(call.where?.AND).toEqual(
+      // NON_MEMBER and SCHOOL records never owe a subscription. They are excluded
+      // from the "no subscription" filter via the NOT { OR: notRequired } clause,
+      // whose role allowlist carries both non-member roles.
+      const andConditions = call.where?.AND as Array<Record<string, unknown>>;
+      const notCondition = andConditions.find((c) => "NOT" in c) as
+        | { NOT: { OR: Array<Record<string, unknown>> } }
+        | undefined;
+      expect(notCondition?.NOT.OR).toEqual(
         expect.arrayContaining([
-          { role: { notIn: ["ADMIN", "LODGE", "NON_MEMBER", "SCHOOL"] } },
+          { role: { in: ["ADMIN", "LODGE", "NON_MEMBER", "SCHOOL"] } },
         ])
       );
     });
@@ -483,7 +488,7 @@ describe("Phase 3: Admin Member Management", () => {
       await getMembers(new NextRequest("http://localhost/api/admin/members?subscription=NONE"));
       const call = vi.mocked(prisma.member.findMany).mock.calls[0][0]!;
       expect(call.where?.AND).toEqual(expect.arrayContaining([
-        { role: { notIn: ["ADMIN", "LODGE", "NON_MEMBER", "SCHOOL"] } },
+        { role: { notIn: ["ADMIN", "LODGE"] } },
         { subscriptions: { none: { seasonYear: 2026 } } },
       ]));
     });
@@ -618,7 +623,7 @@ describe("Phase 3: Admin Member Management", () => {
       expect(res.status).toBe(200);
       const body = await res.json();
       expect(body.members[0].subscriptionStatus).toBe("NOT_REQUIRED");
-      expect(body.members[0].subscriptionXeroInvoiceId).toBeNull();
+      expect(body.members[0].subscriptionXeroInvoiceId).toBe("inv-1");
     });
 
   });
