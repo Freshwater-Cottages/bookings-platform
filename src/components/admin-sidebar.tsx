@@ -43,10 +43,10 @@ import {
   Images,
   UserPlus,
   Plug,
+  ChevronRight,
   Lock,
   Landmark,
   MessageSquareText,
-  ChevronRight,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -285,6 +285,24 @@ export function getVisibleAdminNavSections(
     .filter((section) => section.items.length > 0);
 }
 
+type AdminNavBadgeMap = Record<string, number>;
+
+export function getRenderedAdminNavSections(
+  features: FeatureFlags,
+  badges: AdminNavBadgeMap,
+): NavSection[] {
+  return getVisibleAdminNavSections(features)
+    .map((section) =>
+      section.label === NEEDS_ATTENTION_LABEL
+        ? {
+            ...section,
+            items: section.items.filter((item) => (badges[item.href] ?? 0) > 0),
+          }
+        : section,
+    )
+    .filter((section) => section.items.length > 0);
+}
+
 /** Fetch pending family group request count for sidebar badge. */
 function usePendingFamilyRequests(): number {
   const [count, setCount] = useState(0);
@@ -480,7 +498,6 @@ function SidebarLinks({
   const pendingCreditApprovals = usePendingCreditApprovals();
   const pendingMembershipCancellations = usePendingMembershipCancellations();
   const pendingIssueReports = usePendingIssueReports();
-  const visibleNavSections = getVisibleAdminNavSections(features);
 
   // Per-section expand state, keyed by label. Starts collapsed (empty map) so
   // server and first client render match; the stored preference is applied
@@ -540,19 +557,8 @@ function SidebarLinks({
     badges["/admin/issue-reports"] = pendingIssueReports;
   }
 
-  // The "Needs Attention" section is queue-driven: drop links whose queue is
-  // empty, and the whole section (header included) once nothing is pending, so
-  // it only ever shows work that genuinely needs attention.
-  const renderedNavSections = visibleNavSections
-    .map((section) =>
-      section.label === NEEDS_ATTENTION_LABEL
-        ? {
-            ...section,
-            items: section.items.filter((item) => (badges[item.href] ?? 0) > 0),
-          }
-        : section,
-    )
-    .filter((section) => section.items.length > 0);
+  const renderedNavSections = getRenderedAdminNavSections(features, badges);
+  const visibleNavSections = getVisibleAdminNavSections(features);
 
   // Highlight the most specific nav item whose href is a prefix of the current
   // path, so nested routes (e.g. /admin/xero/setup) activate the deepest match
@@ -658,14 +664,14 @@ export function AdminSidebar({ features }: { features: FeatureFlags }) {
   return (
     <>
       {/* Desktop sidebar */}
-      <aside className="hidden w-60 shrink-0 flex-col border-r bg-background print:hidden md:flex">
-        <div className="flex h-16 items-center gap-2 border-b px-4 font-bold text-foreground">
+      <aside className="hidden w-60 shrink-0 flex-col border-r bg-background print:hidden md:sticky md:top-16 md:flex md:h-[calc(100vh-4rem)]">
+        <div className="flex h-16 shrink-0 items-center gap-2 border-b px-4 font-bold text-foreground">
           <span className="app-brand-mark h-9 w-9">
             <Mountain className="h-5 w-5" />
           </span>
           <span>Admin Panel</span>
         </div>
-        <div className="flex-1 overflow-y-auto p-3">
+        <div className="flex-1 overflow-y-auto p-3 pb-8">
           <SidebarLinks features={features} />
         </div>
       </aside>
@@ -678,14 +684,14 @@ export function AdminSidebar({ features }: { features: FeatureFlags }) {
               <Menu className="h-5 w-5" />
             </Button>
           </SheetTrigger>
-          <SheetContent side="left" className="w-64 p-0">
-            <SheetHeader className="flex h-16 flex-row items-center gap-2 border-b px-4">
+          <SheetContent side="left" className="flex w-64 flex-col p-0">
+            <SheetHeader className="flex h-16 shrink-0 flex-row items-center gap-2 border-b px-4">
               <span className="app-brand-mark h-9 w-9">
                 <Mountain className="h-5 w-5" />
               </span>
               <SheetTitle>Admin Panel</SheetTitle>
             </SheetHeader>
-            <div className="p-3">
+            <div className="flex-1 overflow-y-auto p-3 pb-8">
               <SidebarLinks
                 features={features}
                 onNavigate={() => setMobileOpen(false)}

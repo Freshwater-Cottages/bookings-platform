@@ -203,6 +203,27 @@ variables. `/admin/setup` exposes:
 These settings are audited when saved. They do not call Xero on save; future
 approval processing must keep Xero writes outside long database transactions.
 
+## Member Import And Addresses
+
+Admin member CSV import treats a member identity as the normalized email plus
+normalized first and last name. Rows are skipped as duplicates when that same
+identity already exists in the database or earlier in the same import, even
+when one of the rows has a blank date of birth. Different names may share an
+email address, including rows with the same or blank date of birth.
+
+Only one login-enabled member can use an email address. If an existing member
+with `canLogin: true` already has the email, every new shared-email import is
+created with `canLogin: false`. If the email first appears in the CSV, the first
+allowed identity can log in and later same-email identities are imported as
+non-login members. Setup invite emails and setup/password tokens are created
+only for imported rows that can log in.
+
+Address forms default "Postal same as physical" on for new or blank postal
+addresses. Existing members keep it off only when a saved postal address has
+material postal fields that differ from the physical address. Server routes
+remain authoritative: when `postalSameAsPhysical` is submitted, physical address
+fields are copied into postal fields before the member or application is saved.
+
 ## App Defaults
 
 | Variable                           | Description                                                                                          |
@@ -283,11 +304,18 @@ database table as booleans only.
 
 The finance dashboard reads its revenue, cost, and balance figures from the
 single operational Xero connection configured above. There are no separate
-finance Xero credentials. The finance reports require the
-`accounting.reports.read` OAuth scope, which is included in the operational
-scope set, so reconnect Xero from `/admin/xero` after deploying so the scope is
-granted. Access is controlled per member by `financeAccessLevel`
-(`NONE`/`VIEWER`/`MANAGER`).
+finance Xero credentials. The finance report sync requires these granular Xero
+OAuth scopes:
+
+- `accounting.reports.profitandloss.read`
+- `accounting.reports.balancesheet.read`
+- `accounting.reports.banksummary.read`
+
+Before reconnecting, update the Xero developer app allowed scopes to include the
+exact app request, and verify that `XERO_REDIRECT_URI` matches the deployed
+`/api/admin/xero/callback` URL. Then reconnect Xero from `/admin/xero` so fresh
+tokens carry the current scope set. Access is controlled per member by
+`financeAccessLevel` (`NONE`/`VIEWER`/`MANAGER`).
 
 ## Email Delivery
 

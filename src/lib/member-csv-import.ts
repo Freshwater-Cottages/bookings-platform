@@ -295,6 +295,14 @@ export interface MemberImportPreview {
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const VALID_ROLES = new Set<string>(MEMBER_IMPORT_ROLE_VALUES);
 const MEMBER_IMPORT_ROLE_LABEL = MEMBER_IMPORT_ROLE_VALUES.join(", ");
+const normalizeImportIdentityName = (value: string) =>
+  value.trim().replace(/\s+/g, " ").toLowerCase();
+const getImportIdentityKey = (row: MemberImportPreviewRow) =>
+  [
+    row.values.email.toLowerCase().trim(),
+    normalizeImportIdentityName(row.values.firstName),
+    normalizeImportIdentityName(row.values.lastName),
+  ].join("\u0000");
 const MONTHS_BY_NAME = new Map([
   ["jan", 1],
   ["january", 1],
@@ -946,16 +954,20 @@ export function buildMemberImportPreview(
     };
   });
 
-  const seenEmails = new Map<string, number>();
+  const seenIdentities = new Map<string, number>();
   for (const row of rows) {
     const email = row.values.email.toLowerCase().trim();
     if (!email || !EMAIL_PATTERN.test(email)) continue;
+    if (!row.values.firstName || !row.values.lastName) continue;
 
-    const firstLine = seenEmails.get(email);
+    const identityKey = getImportIdentityKey(row);
+    const firstLine = seenIdentities.get(identityKey);
     if (firstLine) {
-      row.errors.push(`Duplicate email in file (same as line ${firstLine})`);
+      row.errors.push(
+        `Duplicate member identity in file (same email and name as line ${firstLine})`,
+      );
     } else {
-      seenEmails.set(email, row.lineNumber);
+      seenIdentities.set(identityKey, row.lineNumber);
     }
   }
 
