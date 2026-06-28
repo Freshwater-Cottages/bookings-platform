@@ -135,6 +135,30 @@ describe("member CSV import parser", () => {
     });
   });
 
+  it("normalizes Associate and Life member roles in CSV previews", () => {
+    const parsed = parseMemberImportCsv(
+      [
+        "First Name,Last Name,Email,Role",
+        "Alice,Associate,alice@example.com,Associate Member",
+        "Lena,Life,lena@example.com,LIFE",
+      ].join("\n"),
+    );
+
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+
+    const preview = buildMemberImportPreview(
+      parsed.data,
+      inferMemberImportColumnMapping(parsed.data.headers),
+    );
+
+    expect(preview.hasErrors).toBe(false);
+    expect(preview.importRows.map((row) => row.role)).toEqual([
+      "ASSOCIATE",
+      "LIFE",
+    ]);
+  });
+
   it("reports invalid mapped dates with line and column context", () => {
     const parsed = parseMemberImportCsv(
       "First Name,Last Name,Email,DOB\nAlice,Anderson,alice@example.com,31/02/1990",

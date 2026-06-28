@@ -392,6 +392,13 @@ interface TeacherCreationPlan {
 export async function approveSchoolBookingRequest(input: {
   requestId: string;
   adminMemberId: string;
+  /**
+   * Optional admin override of the bulk child counts at approval time. The
+   * named teachers/parent helpers are preserved; the children are regenerated
+   * from these counts, then the booking is repriced and capacity re-checked
+   * against the new list. Leave unset to use the submitted guest list as-is.
+   */
+  guestOverride?: { childCounts: SchoolChildCounts };
 }): Promise<ApproveSchoolBookingRequestOutcome> {
   const request = await prisma.bookingRequest.findUnique({
     where: { id: input.requestId },
@@ -412,9 +419,29 @@ export async function approveSchoolBookingRequest(input: {
     );
   }
 
-  const guests = parseBookingRequestGuests(request.guests);
   const teachers = parseSchoolTeachers(request.teachers);
   const linkedMembers = linkedGuestMemberMap(request.linkedGuestMembers);
+  // When the admin varies the quantity, regenerate the guest list from the
+  // preserved teachers + the new child counts; otherwise use the submitted
+  // snapshot. The new list then drives pricing, capacity and the booking below.
+  const guests = input.guestOverride
+    ? generateSchoolGuests({
+        teachers,
+        childCounts: input.guestOverride.childCounts,
+      })
+    : parseBookingRequestGuests(request.guests);
+  if (guests.length === 0) {
+    throw new BookingRequestError("At least one guest is required", 422);
+  }
+  if (input.guestOverride) {
+    const lodgeCapacity = await getLodgeCapacity();
+    if (guests.length > lodgeCapacity) {
+      throw new BookingRequestError(
+        `A school booking cannot exceed the lodge capacity of ${lodgeCapacity} guests`,
+        422
+      );
+    }
+  }
   const schoolName =
     request.schoolName ?? `${request.contactFirstName} ${request.contactLastName}`;
 
@@ -661,6 +688,11 @@ export async function approveSchoolBookingRequest(input: {
           status: BookingRequestStatus.CONVERTED,
           convertedBookingId: booking.id,
           convertedMemberId: schoolMember.id,
+          // Keep the request snapshot consistent with what was actually booked
+          // when the admin varied the quantity.
+          ...(input.guestOverride
+            ? { guests: guests as unknown as Prisma.InputJsonValue }
+            : {}),
         },
       });
 

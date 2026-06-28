@@ -465,7 +465,7 @@ describe("Phase 3: Admin Member Management", () => {
       await getMembers(new NextRequest("http://localhost/api/admin/members?subscription=NONE"));
       const call = vi.mocked(prisma.member.findMany).mock.calls[0][0]!;
       expect(call.where?.AND).toEqual(expect.arrayContaining([
-        { role: { not: "ADMIN" } },
+        { role: { notIn: ["ADMIN", "LODGE"] } },
         { subscriptions: { none: { seasonYear: 2026 } } },
       ]));
     });
@@ -547,7 +547,7 @@ describe("Phase 3: Admin Member Management", () => {
       expect(call.where?.AND).toEqual(expect.arrayContaining([
         {
           OR: expect.arrayContaining([
-            { role: "ADMIN" },
+            { role: { in: ["ADMIN", "LODGE"] } },
             { ageTier: { in: expect.arrayContaining(["INFANT", "CHILD"]) } },
           ]),
         },
@@ -735,7 +735,7 @@ describe("Phase 3: Admin Member Management", () => {
         { passwordResetTokens: { some: { used: false, expiresAt: { gt: expect.any(Date) } } } },
         {
           OR: expect.arrayContaining([
-            { role: "ADMIN" },
+            { role: { in: ["ADMIN", "LODGE"] } },
             { ageTier: { in: expect.arrayContaining(["INFANT", "CHILD"]) } },
           ]),
         },

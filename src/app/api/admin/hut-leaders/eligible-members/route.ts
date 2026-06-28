@@ -3,6 +3,7 @@ import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { formatDateOnly, isDateOnlyString, parseDateOnly } from "@/lib/date-only";
 import { OPERATIONAL_STAY_BOOKING_STATUSES } from "@/lib/booking-status";
+import { MEMBER_LEVEL_ROLE_VALUES } from "@/lib/member-roles";
 
 /**
  * GET /api/admin/hut-leaders/eligible-members?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD
@@ -41,6 +42,10 @@ export async function GET(req: NextRequest) {
         status: { in: [...OPERATIONAL_STAY_BOOKING_STATUSES] },
         checkIn: { lte: rangeEnd },
         checkOut: { gt: rangeStart },
+      },
+      member: {
+        active: true,
+        role: { in: [...MEMBER_LEVEL_ROLE_VALUES] },
       },
     },
     select: {
@@ -92,6 +97,11 @@ export async function GET(req: NextRequest) {
       status: { in: [...OPERATIONAL_STAY_BOOKING_STATUSES] },
       checkIn: { lte: rangeEnd },
       checkOut: { gt: rangeStart },
+      member: {
+        active: true,
+        ageTier: "ADULT",
+        role: { in: [...MEMBER_LEVEL_ROLE_VALUES] },
+      },
     },
     select: {
       checkIn: true,

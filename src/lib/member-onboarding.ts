@@ -3,6 +3,7 @@ import {
   type MemberProfileCompletenessInput,
 } from "@/lib/member-profile-completeness";
 import { buildParentLinks } from "@/lib/member-parent-links";
+import { isMemberLevelRole } from "@/lib/member-roles";
 
 export const MEMBER_ONBOARDING_PROFILE_SELECT = {
   id: true,
@@ -153,7 +154,7 @@ export function shouldShowMemberOnboarding(member: MemberOnboardingProfile) {
   if (
     member.active !== true ||
     member.canLogin !== true ||
-    member.role !== "MEMBER" ||
+    !isMemberLevelRole(member.role) ||
     member.forcePasswordChange === true
   ) {
     return false;

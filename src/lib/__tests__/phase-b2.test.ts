@@ -103,7 +103,7 @@ describe("#25: Hut Leader POST Overlap Enforcement", () => {
 
   it("allows 1-day overlap (handover scenario) — returns 201", async () => {
     mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN" } });
-    mockPrisma.member.findUnique.mockResolvedValue({ id: "m1", active: true });
+    mockPrisma.member.findUnique.mockResolvedValue({ id: "m1", active: true, role: "MEMBER" });
     // Existing: Apr 7-10, New: Apr 10-12 → 1 day overlap = OK
     mockPrisma.hutLeaderAssignment.findMany.mockResolvedValue([
       {
@@ -128,7 +128,7 @@ describe("#25: Hut Leader POST Overlap Enforcement", () => {
 
   it("rejects 2+ day overlap with clear error message — returns 409", async () => {
     mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN" } });
-    mockPrisma.member.findUnique.mockResolvedValue({ id: "m1", active: true });
+    mockPrisma.member.findUnique.mockResolvedValue({ id: "m1", active: true, role: "MEMBER" });
     // Existing: Apr 7-10, New: Apr 9-12 → 2 days overlap = rejected
     mockPrisma.hutLeaderAssignment.findMany.mockResolvedValue([
       {
@@ -156,7 +156,7 @@ describe("#25: Hut Leader POST Overlap Enforcement", () => {
 
   it("allows creation when no overlapping assignments exist", async () => {
     mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN" } });
-    mockPrisma.member.findUnique.mockResolvedValue({ id: "m1", active: true });
+    mockPrisma.member.findUnique.mockResolvedValue({ id: "m1", active: true, role: "MEMBER" });
     mockPrisma.hutLeaderAssignment.findMany.mockResolvedValue([]);
     mockPrisma.hutLeaderAssignment.create.mockResolvedValue({ id: "new-1" });
 

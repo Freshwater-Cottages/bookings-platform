@@ -4,6 +4,7 @@ import {
   formatDateOnly,
 } from "./date-only";
 import { LODGE_VISIBLE_BOOKING_STATUSES } from "./lodge-date-scoping";
+import { isMemberLevelRole } from "@/lib/member-roles";
 
 export type KioskTier = "admin" | "hut-leader" | "lodge" | "staying-guest" | "none";
 
@@ -26,7 +27,7 @@ export async function getKioskAccessTier(
   if (userRole === "ADMIN") return "admin";
   if (userRole === "LODGE") return "lodge";
 
-  if (userRole === "MEMBER") {
+  if (isMemberLevelRole(userRole)) {
     // Check hut leader assignment: (startDate - 1 day) <= date <= endDate
     const nextDay = addDaysDateOnly(date, 1);
 

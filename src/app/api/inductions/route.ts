@@ -6,6 +6,7 @@ import {
   listInductionsAwaitingSignOff,
   type SignerContext,
 } from "@/lib/induction";
+import { isMemberLevelRole } from "@/lib/member-roles";
 import { requireActiveSession } from "@/lib/session-guards";
 
 export async function GET() {
@@ -16,7 +17,9 @@ export async function GET() {
   const ctx: SignerContext = {
     memberId,
     isAdmin: guard.session.user.role === "ADMIN",
-    isHutLeader: await hasActiveHutLeaderAssignment(memberId),
+    isHutLeader:
+      isMemberLevelRole(guard.session.user.role) &&
+      (await hasActiveHutLeaderAssignment(memberId)),
   };
 
   const [ownRaw, awaiting] = await Promise.all([

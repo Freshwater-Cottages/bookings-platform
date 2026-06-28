@@ -25,8 +25,7 @@ import {
 } from "@/lib/audit";
 import { nameField } from "@/lib/zod-helpers";
 import { loadMemberFieldsFlags } from "@/lib/member-fields-settings";
-
-const MEMBER_LEVEL_ROLES = ["MEMBER", "ASSOCIATE", "LIFE"];
+import { isMemberLevelRole } from "@/lib/member-roles";
 
 const maxStr = (len: number) => z.string().max(len).optional().nullable();
 
@@ -234,7 +233,7 @@ export async function PUT(req: NextRequest) {
     updateData.occupation = data.occupation?.trim() || null;
   }
 
-  if (existing.canLogin && MEMBER_LEVEL_ROLES.includes(existing.role)) {
+  if (existing.canLogin && isMemberLevelRole(existing.role)) {
     const profileCompleteness = evaluateSelfServiceProfilePayload({
       firstName: updateData.firstName as string | null | undefined,
       lastName: updateData.lastName as string | null | undefined,

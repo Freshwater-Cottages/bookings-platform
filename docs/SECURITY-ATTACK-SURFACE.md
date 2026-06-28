@@ -74,8 +74,8 @@ under `Data touched` instead.
 | `/api/admin/communications/**`, `/api/admin/email-templates/**`, `/api/admin/email-settings`, `/api/admin/email-suppressions/**`, `/api/admin/email-failures/**`, `/api/admin/notification-delivery-policies`, `/api/admin/notifications` | Admin session. Mixed shared and hand-rolled admin guards. | Admin. | Email templates/settings, send history, suppressions, notification preferences, email failure review. | SES/SMTP email send. | Admin role plus active guard; communications send is rate-limited. | Audit logs for template/settings/suppression/notification changes; logger. | Admin-triggered bulk email and template injection risk. #616 should review SES/email boundaries and redaction. |
 | `/api/admin/audit-log`, `/api/admin/reports`, `/api/admin/members/export`, `/api/admin/members/import` | Admin session. | Admin. | Audit log, reports, member import/export data, bookings/payments/report aggregates. | Import may email or sync side effects through services. | Admin role plus active guard; import has API rate limit; exports select broad PII. | Logger and audit rows for import/export where implemented. | Large data extraction surface. #613/#614 should guard missing admin markers; #617/#619 should review export handling and storage. |
 | `/api/admin/lodge`, `/api/admin/chores/**`, `/api/admin/committee/**`, `/api/admin/hut-leaders/**`, `/api/admin/roster/**`, `/api/admin/issue-reports/**` | Admin session. | Admin. | Lodge config, chores, committee contacts, hut leader PIN/email data, roster, issue reports. | Email sends for hut-leader PIN/issue report workflows. | Admin role plus active guard, some `requireAdmin()` routes. | Audit log for committee/issue/lodge changes; logger for failures. | Public-facing committee and lodge operational data. #618 should review kiosk and roster assumptions. |
-| `/api/admin/xero/**` | Admin session plus Xero OAuth state for connect/callback. | Admin. | Operational Xero tokens, contact groups, account/item mappings, contact links, sync operations, inbound events, duplicate/contact mismatch snapshots, Xero API usage. | Xero API and OAuth. | Admin role plus active guard; OAuth callback validates state cookie; module gates through proxy/module state for many Xero paths. | Audit log for mutating admin Xero actions, Xero operation logs, Xero inbound event records, logger. | Sensitive integration surface. #613 should standardize guards; #616 should review OAuth state, token encryption, retry/replay controls, and webhook reconciliation. |
-| `/api/finance/bookings/metrics`, `/api/finance/sync/**`, `/api/finance/legacy-dashboard/**` | Finance viewer or manager guard depending on route. Legacy auth route redirects/204s for viewer access. | Finance viewer/manager; not lodge accounts. | Finance snapshots, booking metrics, and finance sync run state. | Manual finance sync can call Xero through the single operational Xero connection; dashboard reads use stored data. | `requireFinanceViewerApiAccess()` or `requireFinanceManagerApiAccess()`; active and force-password-change checks. | Logger for sync failures; sync status records. | Privileged but not always admin. #618 should review finance role assignment and legacy dashboard bridge; #614 should cover ordinary member/admin-without-finance denial. |
+| `/api/admin/xero/**` | Admin session plus Xero OAuth state for connect/callback. | Admin. | Operational Xero tokens, contact groups, account/item mappings, contact links, sync operations, inbound events, duplicate/contact mismatch snapshots, Xero API usage. | Xero API and OAuth. | Admin role plus active guard; OAuth callback validates state cookie; feature gates through proxy/module state for many Xero paths. | Audit log for mutating admin Xero actions, Xero operation logs, Xero inbound event records, logger. | Sensitive integration surface. #613 should standardize guards; #616 should review OAuth state, token encryption, retry/replay controls, and webhook reconciliation. |
+| `/api/finance/bookings/metrics`, `/api/finance/sync/**`, `/api/finance/legacy-dashboard/**` | Finance viewer or manager guard depending on route. Legacy auth route redirects/204s for viewer access. | Finance viewer/manager; not lodge accounts. | Finance snapshots, booking metrics, finance sync run state, operational Xero organisation/config status. | Operational Xero API through the finance sync service. | `requireFinanceViewerApiAccess()` or `requireFinanceManagerApiAccess()`; active and force-password-change checks; shared admin-managed Xero connection. | Logger for sync/Xero failures; sync status records. | Privileged but not always admin. #618 should review finance role assignment and legacy dashboard bridge; #614 should cover ordinary member/admin-without-finance denial. |
 | `/api/cron`, `/api/cron/payments`, `/api/cron/xero`, `/api/cron/issue-reports` | Shared `x-cron-secret` header matching `CRON_SECRET`. | External scheduler or operator with cron secret. | Pending booking confirmation, payment recovery, Xero outbox/retry/inbound reconciliation, issue-report digest, cron run rows. | Stripe through payment recovery, Xero through operational sync, email alerts/digests. | Constant-time compare in each route, task allowlists, module-state gating for Xero tasks. | Logger; `CronJobRun` records for payment recovery; provider/service logs. | Secret helper is duplicated. #613 should centralize cron guard and #614 should test missing/wrong/different-length secrets. |
 | `/api/deploy/runtime-status` | Shared `x-cron-secret` header matching `CRON_SECRET`. | Blue/green deploy script or operator with cron secret. | Runtime role and cron-enabled flag only. | None. | Shared `requireCronSecret()` helper (constant-time compare). | None. | Resolved under #613 (closed): now uses the shared cron/deploy guard helper rather than a duplicated local compare. |
 | `/api/webhooks/stripe` | Stripe signature. No session auth by design. | Stripe. | Stripe event payload, payment intent/setup intent state through service. | Stripe webhook verification and downstream payment handling. | Requires `STRIPE_WEBHOOK_SECRET` and `stripe-signature`; bounded raw body read before signature verification. | Logger for signature/body-limit errors; service-level records. | Do not add session auth. Event idempotency is handled by `ProcessedWebhookEvent`; keep Stripe event coverage under payment-integrity review. |
@@ -85,9 +85,10 @@ under `Data touched` instead.
 
 ## External Integration Review (#616)
 
-This review covered the current Stripe, operational Xero, finance Xero,
-SES/SNS, Sentry, OAuth state, webhook signature, token encryption, and provider
-callback logging paths without live provider calls.
+This review covered the current Stripe, operational Xero, finance reporting over
+the operational Xero connection, SES/SNS, Sentry, OAuth state, webhook signature,
+token encryption, and provider callback logging paths without live provider
+calls.
 
 Concrete hardening added from the review:
 
@@ -96,9 +97,9 @@ Concrete hardening added from the review:
   malformed signed payloads still return `400`/`401` as appropriate.
 - Xero webhook JSON now requires an object payload with an array `events` value
   and caps a single delivery to 100 events before processing any event rows.
-- Operational and finance Xero OAuth callbacks still pass the exact registered
-  callback URL to the Xero SDK, but logs now record only callback path and
-  presence flags for `code`/`state`.
+- Operational Xero OAuth callbacks still pass the exact registered callback URL
+  to the Xero SDK, but logs now record only callback path and presence flags for
+  `code`/`state`.
 - Shared log/Sentry redaction now scrubs OAuth `code` and `state` query
   parameters, plus Sentry request URLs, query strings, breadcrumbs, exception
   values, and extra data.
@@ -112,9 +113,7 @@ Verified controls already present and intentionally preserved:
   release the claim if downstream processing fails.
 - Xero inbound events use correlation keys for replay/idempotency and keep
   reconciliation work outside the initial provider response path.
-- Operational and finance Xero token stores encrypt access and refresh tokens
-  at rest; finance token loading supports configured previous-key fallback for
-  rotation.
+- Operational Xero token storage encrypts access and refresh tokens at rest.
 
 Residual risks to keep visible:
 
@@ -221,8 +220,8 @@ Admin route subfamilies are:
 | Member PII | Member/profile/family/admin/application routes. | Session/admin guards, audit logs on sensitive changes, scoped selects in public committee route. | #613/#614 for route boundaries; #617 for integrity and lifecycle review. |
 | Booking and payment records | Booking, payment, refund, admin booking/payment routes. | Session guards, service-level ownership, Stripe server-side calls, payment transaction records. | #617 for money-state invariants, idempotency, and integer cents. |
 | Stripe identifiers and client secrets | Payment routes and webhook/service layers. | Server-side Stripe secret, client secret returned only through authenticated payment routes. | #616/#617 for webhook idempotency and client-secret ownership. |
-| Operational Xero tokens and object links | `admin/xero/**`, Xero token store, outbox/inbound reconciliation. | Admin guard, encrypted token store, OAuth state cookie, module gates. | #616 for OAuth/webhook/retry boundaries. |
-| Finance Xero tokens and finance snapshots | `finance/xero/**`, finance sync routes and storage. | Finance manager/viewer guards, separate finance encryption key variables. | #618 for finance roles and legacy bridge; #616 for Xero integration controls. |
+| Operational Xero tokens and object links | `admin/xero/**`, Xero token store, outbox/inbound reconciliation. | Admin guard, encrypted token store, OAuth state cookie, feature gates. | #616 for OAuth/webhook/retry boundaries. |
+| Finance snapshots and reporting datasets | Finance sync routes and storage, using the shared operational Xero connection. | Finance manager/viewer guards, operational Xero token encryption and admin-managed reconnect flow. | #618 for finance roles and legacy bridge; #616 for Xero integration controls. |
 | Email/SNS data | Contact, application, admin communications, email templates, SES/SNS webhook. | Rate limits for public senders, template escaping, SNS signature verification, email suppression records. | #616 for SES/SNS topic allowlist and outbound email abuse. |
 | Audit, webhook, cron, and provider logs | `AuditLog`, `WebhookLog`, `CronJobRun`, Xero operation/inbound records. | Structured logging with redaction helpers for known sensitive URL tokens; webhook logs redact error text. | #615/#616 for callback URL and token redaction review; compromised log reader threat below. |
 | CI/deploy secrets | GitHub Actions secrets/vars, `.env`, Compose, GHCR tokens, Sentry token. | CI permission scoping, gitleaks, deployment docs warn not to commit secrets. | #619 for workflow permissions, provenance, and secret-scope review. |
@@ -275,16 +274,16 @@ admin routes that lack an approved guard marker.
 
 ### Finance Manager Or Viewer
 
-Finance actors can view metrics/snapshots and managers can run finance sync or
-connect/disconnect finance Xero. Abuse goals include reading sensitive financial
-data without club-wide admin rights, triggering expensive syncs, or connecting a
-wrong Xero tenant.
+Finance actors can view metrics/snapshots and managers can run finance sync.
+Abuse goals include reading sensitive financial data without club-wide admin
+rights, triggering expensive syncs, or syncing against the wrong operational
+Xero tenant.
 
 Current mitigations are separate finance access levels, active-session checks,
-force-password-change checks, finance Xero OAuth state cookies, and route-level
-viewer/manager split. #614 should test denial for ordinary members/admins
-without finance access; #618 should review finance role assignment and legacy
-dashboard behavior.
+force-password-change checks, the shared admin-managed Xero connection, and
+route-level viewer/manager split. #614 should test denial for ordinary
+members/admins without finance access; #618 should review finance role
+assignment and legacy dashboard behavior.
 
 ### Lodge Account Or Hut-Leader PIN Session
 
@@ -419,11 +418,10 @@ Hardening applied in #617:
   `resourceId` values, and reject invalid `eventDateUtc` values before
   recording inbound rows. Empty `events` validation deliveries remain accepted.
 - Operational Xero OAuth callbacks now require Xero to return an organisation
-  tenant before encrypted access and refresh tokens are saved, matching the
-  existing finance Xero fail-closed tenant behavior.
-- Operational and finance Xero callback redirects now show only safe local
-  error messages; provider callback exception details are logged through the
-  shared redaction layer and are not reflected into browser redirect URLs.
+  tenant before encrypted access and refresh tokens are saved.
+- Operational Xero callback redirects now show only safe local error messages;
+  provider callback exception details are logged through the shared redaction
+  layer and are not reflected into browser redirect URLs.
 
 Verified controls already present and intentionally preserved:
 
@@ -465,8 +463,7 @@ Residual risks to keep visible:
 
 Reviewed the current #618 surfaces: lodge/kiosk page gates, lodge guest and
 roster APIs, hut-leader PIN login/session cookies, finance page and API guards,
-finance Xero connect/status/sync/disconnect routes, and the legacy finance
-dashboard bridge.
+finance sync routes, and the legacy finance dashboard bridge.
 
 Hardening applied in #618:
 
@@ -491,8 +488,8 @@ Verified controls already present and intentionally preserved:
 
 - Finance access remains separate from `ADMIN`: `NONE` cannot access finance
   pages/APIs, `VIEWER` can read reports and the legacy bridge auth/export
-  surfaces, and `MANAGER` is required for finance Xero connection,
-  disconnection, status, callback handling, and manual sync routes.
+  surfaces, and `MANAGER` is required for manual sync routes. Xero connection
+  state is managed through the shared operational admin Xero connection.
 - `LODGE` sessions are rejected by finance API guards even if a member row has a
   finance access value.
 - Lodge mutation routes continue to reject `staying-guest` access for arrivals,
@@ -573,9 +570,9 @@ Residual risks to keep visible:
   shape validation, malformed JSON behavior, Addy/committee response bounds, and
   token-path log redaction. Remaining public-form policy tradeoffs are noted in
   the accepted residual risk above.
-- #616 - External integrations: review Stripe, operational Xero, finance Xero,
-  SES/SNS, Sentry, OAuth state handling, webhook signature/idempotency, token
-  encryption, and provider callback logging.
+- #616 - External integrations: review Stripe, operational Xero, finance
+  reporting through Xero, SES/SNS, Sentry, OAuth state handling, webhook
+  signature/idempotency, token encryption, and provider callback logging.
 - #617 - Money, booking, and lifecycle integrity: review cents-only money
   handling, payment/refund idempotency, booking ownership/settlement,
   cancellation/deletion/archive state, Xero outbox sequencing, and transaction

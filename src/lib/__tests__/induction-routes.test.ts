@@ -135,6 +135,36 @@ describe("induction route boundaries", () => {
     expect(mocks.canSignOff).not.toHaveBeenCalled();
   });
 
+  it("does not treat operational accounts as hut-leader signers", async () => {
+    mocks.requireActiveSession.mockResolvedValue({
+      ok: true,
+      session: {
+        user: {
+          id: "lodge-1",
+          role: "LODGE",
+          email: "lodge@example.com",
+        },
+      },
+    });
+    mocks.hasActiveHutLeaderAssignment.mockResolvedValue(true);
+
+    const response = await inductionDetailGET(
+      new NextRequest("http://localhost/api/inductions/induction-1"),
+      routeParams(),
+    );
+
+    expect(response.status).toBe(403);
+    expect(mocks.hasActiveHutLeaderAssignment).not.toHaveBeenCalled();
+    expect(mocks.resolveSignerRole).toHaveBeenCalledWith(
+      {
+        memberId: "lodge-1",
+        isAdmin: false,
+        isHutLeader: false,
+      },
+      inductionForAnotherMember.application,
+    );
+  });
+
   it("does not let an unrelated member update self-assessment answers", async () => {
     const response = await selfAssessPOST(
       request("/api/inductions/induction-1/self-assess", {

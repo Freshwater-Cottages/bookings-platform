@@ -4,6 +4,7 @@ import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { getSeasonYear } from "@/lib/utils";
 import { requiresPaidSubscriptionForBooking } from "@/lib/member-subscription-eligibility";
+import { roleNeverRequiresSubscription } from "@/lib/member-subscription-defaults";
 
 export async function GET() {
   const session = await auth();
@@ -42,7 +43,7 @@ export async function GET() {
   // Reports NOT_REQUIRED when the Xero module is effectively off so the
   // booking UI never blocks on a subscription that cannot be invoiced.
   const subscriptionRequired =
-    member?.role !== "ADMIN" &&
+    !roleNeverRequiresSubscription(member?.role ?? "MEMBER") &&
     await requiresPaidSubscriptionForBooking(member?.ageTier);
   const status = sub?.status ?? "NOT_INVOICED";
 

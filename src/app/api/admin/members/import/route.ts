@@ -35,6 +35,7 @@ import {
   parseGenderValue,
   parseTitleValue,
 } from "@/lib/member-enums";
+import { MEMBER_IMPORT_ROLE_VALUES } from "@/lib/member-roles";
 
 const nullableImportString = (max: number) =>
   z.string().max(max).optional().nullable();
@@ -75,7 +76,7 @@ const importRowSchema = z
     ),
     lifeMemberDate: z.string().max(32).optional().nullable(),
     comments: nullableImportString(MEMBER_IMPORT_COMMENTS_MAX_LENGTH),
-    role: z.enum(["MEMBER", "ADMIN"]).optional().default("MEMBER"),
+    role: z.enum(MEMBER_IMPORT_ROLE_VALUES).optional().default("MEMBER"),
     sourceLineNumber: z.number().int().positive().optional(),
     sourceColumnLabels: z.record(z.string(), z.string().max(128)).optional(),
   })
@@ -281,7 +282,7 @@ export async function POST(req: NextRequest) {
     lifeMemberDate: Date | null;
     comments: string | null;
     ageTier: AgeTier;
-    role: "MEMBER" | "ADMIN";
+    role: (typeof MEMBER_IMPORT_ROLE_VALUES)[number];
   }
   const validatedRows: ValidatedRow[] = [];
 
@@ -392,7 +393,7 @@ export async function POST(req: NextRequest) {
       lifeMemberDate,
       comments: row.comments?.trim() || null,
       ageTier,
-      role: (row.role || "MEMBER") as "MEMBER" | "ADMIN",
+      role: (row.role || "MEMBER") as (typeof MEMBER_IMPORT_ROLE_VALUES)[number],
     });
   }
 

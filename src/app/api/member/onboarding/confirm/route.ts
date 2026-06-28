@@ -7,6 +7,7 @@ import {
   getMemberOnboardingStatus,
 } from "@/lib/member-onboarding";
 import { getMissingMemberProfileFieldDetails } from "@/lib/member-profile-completeness";
+import { isMemberLevelRole } from "@/lib/member-roles";
 
 export async function POST() {
   const session = await auth();
@@ -28,11 +29,10 @@ export async function POST() {
     return NextResponse.json({ error: "Member not found" }, { status: 404 });
   }
 
-  const MEMBER_LEVEL_ROLES = ["MEMBER", "ASSOCIATE", "LIFE"];
   if (
     !member.active ||
     !member.canLogin ||
-    !MEMBER_LEVEL_ROLES.includes(member.role)
+    !isMemberLevelRole(member.role)
   ) {
     return NextResponse.json(
       { error: "Onboarding confirmation is only available to active login-capable member accounts" },

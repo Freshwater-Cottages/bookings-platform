@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { hasActiveHutLeaderAssignment } from "@/lib/hut-leader";
 import { hasAnyActiveLodgePinSession } from "@/lib/lodge-pin-session";
+import { isMemberLevelRole } from "@/lib/member-roles";
 
 export default async function LodgeRosterLayout({
   children,
@@ -16,7 +17,7 @@ export default async function LodgeRosterLayout({
     }
 
     if (
-      session.user.role === "MEMBER" &&
+      isMemberLevelRole(session.user.role) &&
       (await hasActiveHutLeaderAssignment(session.user.id))
     ) {
       return <>{children}</>;

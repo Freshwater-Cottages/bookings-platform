@@ -4,6 +4,7 @@ import {
   parseGenderValue,
   parseTitleValue,
 } from "@/lib/member-enums";
+import { MEMBER_IMPORT_ROLE_VALUES } from "@/lib/member-roles";
 
 export const MEMBER_IMPORT_MAX_ROWS = 500;
 export const MEMBER_IMPORT_COMMENTS_MAX_LENGTH = 4000;
@@ -292,7 +293,8 @@ export interface MemberImportPreview {
 }
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const VALID_ROLES = new Set(["MEMBER", "ADMIN"]);
+const VALID_ROLES = new Set<string>(MEMBER_IMPORT_ROLE_VALUES);
+const MEMBER_IMPORT_ROLE_LABEL = MEMBER_IMPORT_ROLE_VALUES.join(", ");
 const MONTHS_BY_NAME = new Map([
   ["jan", 1],
   ["january", 1],
@@ -753,6 +755,18 @@ function getMappedColumnLabels(
   return labels;
 }
 
+function parseImportRoleValue(value: string): string | null {
+  const normalized = value
+    .trim()
+    .toUpperCase()
+    .replace(/[\s-]+/g, "_");
+
+  if (!normalized) return "MEMBER";
+  if (normalized === "ASSOCIATE_MEMBER") return "ASSOCIATE";
+  if (normalized === "LIFE_MEMBER") return "LIFE";
+  return VALID_ROLES.has(normalized) ? normalized : null;
+}
+
 function getColumnContext(
   labels: Record<string, string>,
   fieldKey: MemberImportFieldKey,
@@ -805,7 +819,8 @@ export function buildMemberImportPreview(
   const sourceColumnLabels = getMappedColumnLabels(csv, mapping);
 
   const rows: MemberImportPreviewRow[] = csv.rows.map((record) => {
-    const role = getValue(record, "role").toUpperCase();
+    const roleInput = getValue(record, "role");
+    const role = parseImportRoleValue(roleInput);
     const fullName = getValue(record, "fullName");
     const names = deriveMemberImportNameFields({
       fullName,
@@ -855,7 +870,7 @@ export function buildMemberImportPreview(
     if (streetPostalCode) values.streetPostalCode = streetPostalCode;
     if (lifeMemberDate) values.lifeMemberDate = lifeMemberDate;
     if (comments) values.comments = comments;
-    values.role = role || "MEMBER";
+    values.role = role || roleInput.trim().toUpperCase();
 
     const errors: string[] = [];
     if (!values.firstName) errors.push("First name is required");
@@ -918,8 +933,8 @@ export function buildMemberImportPreview(
         );
       }
     }
-    if (role && !VALID_ROLES.has(role)) {
-      errors.push("Role must be MEMBER or ADMIN");
+    if (roleInput && !role) {
+      errors.push(`Role must be one of ${MEMBER_IMPORT_ROLE_LABEL}`);
     }
 
     return {

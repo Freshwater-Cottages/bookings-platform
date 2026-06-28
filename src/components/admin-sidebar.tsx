@@ -46,6 +46,7 @@ import {
   Lock,
   Landmark,
   MessageSquareText,
+  ChevronRight,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -64,6 +65,20 @@ interface NavSection {
   items: Array<{ href: string; label: string; icon: typeof LayoutDashboard }>;
 }
 
+/**
+ * Label of the queue-driven section whose items are shown only when they have
+ * something pending. The section (and its header) disappears entirely once all
+ * its queues are clear, so it never implies work that isn't there.
+ */
+const NEEDS_ATTENTION_LABEL = "Needs Attention";
+
+/**
+ * localStorage key holding the admin's per-section expand/collapse state, as a
+ * `{ [sectionLabel]: boolean }` map. Sections default to collapsed; only the
+ * labels the user has expanded are persisted as `true`.
+ */
+const SIDEBAR_COLLAPSE_STORAGE_KEY = "admin-sidebar:expanded-sections";
+
 const navSections: NavSection[] = [
   {
     items: [
@@ -75,7 +90,10 @@ const navSections: NavSection[] = [
     ],
   },
   {
-    label: "Needs Attention",
+    // Queue-driven alerts. Every item here is also reachable from its natural
+    // section below; these are duplicate links that surface only while their
+    // queue has something pending (see the filtering in SidebarLinks).
+    label: NEEDS_ATTENTION_LABEL,
     items: [
       {
         href: "/admin/booking-requests",
@@ -104,6 +122,11 @@ const navSections: NavSection[] = [
     label: "Bookings & Beds",
     items: [
       { href: "/admin/bookings", label: "Bookings", icon: BookOpen },
+      {
+        href: "/admin/booking-requests",
+        label: "Booking Requests",
+        icon: ClipboardList,
+      },
       { href: "/admin/book", label: "Book on Behalf", icon: UserPlus },
       {
         href: "/admin/bed-allocation",
@@ -111,6 +134,23 @@ const navSections: NavSection[] = [
         icon: BedDouble,
       },
       { href: "/admin/waitlist", label: "Waitlist", icon: Clock },
+    ],
+  },
+  {
+    label: "Rates & Policies",
+    items: [
+      {
+        href: "/admin/seasons",
+        label: "Hut Fees & Seasons",
+        icon: CalendarRange,
+      },
+      { href: "/admin/age-tier-settings", label: "Age Groups", icon: Sliders },
+      { href: "/admin/promo-codes", label: "Promo Codes", icon: Tag },
+      {
+        href: "/admin/booking-policies",
+        label: "Booking Policies",
+        icon: XCircle,
+      },
     ],
   },
   {
@@ -122,6 +162,11 @@ const navSections: NavSection[] = [
         label: "Internet Banking",
         icon: Landmark,
       },
+      {
+        href: "/admin/refund-requests",
+        label: "Refunds & Credits",
+        icon: RotateCcw,
+      },
       { href: "/admin/reports", label: "Reports", icon: BarChart2 },
       { href: "/admin/xero", label: "Xero Sync", icon: RefreshCw },
     ],
@@ -130,37 +175,52 @@ const navSections: NavSection[] = [
     label: "Members",
     items: [
       { href: "/admin/members", label: "Members", icon: Users },
+      { href: "/admin/subscriptions", label: "Subscriptions", icon: FileText },
+      {
+        href: "/admin/member-applications",
+        label: "Applications",
+        icon: ClipboardList,
+      },
+      {
+        href: "/admin/membership-cancellations",
+        label: "Cancellations",
+        icon: UserX,
+      },
+      { href: "/admin/induction", label: "Induction", icon: ClipboardCheck },
+      { href: "/admin/communications", label: "Communications", icon: Mail },
+      { href: "/admin/lockers", label: "Lockers", icon: House },
       { href: "/admin/family-groups", label: "Family Groups", icon: Users },
       {
         href: "/admin/family-suggestions",
         label: "Family Suggestions",
         icon: Users,
       },
-      { href: "/admin/induction", label: "Induction", icon: ClipboardCheck },
-      { href: "/admin/subscriptions", label: "Subscriptions", icon: FileText },
-      { href: "/admin/communications", label: "Communications", icon: Mail },
-      { href: "/admin/lockers", label: "Lockers", icon: House },
     ],
   },
   {
     label: "Lodge Operations",
     items: [
+      { href: "/admin/hut-leaders", label: "Hut Leaders", icon: UserCheck },
       { href: "/admin/roster", label: "Roster", icon: ClipboardList },
       { href: "/admin/chores", label: "Chores", icon: CheckSquare },
-      { href: "/admin/hut-leaders", label: "Hut Leaders", icon: UserCheck },
+      { href: "/admin/lodge", label: "Lodge Kiosk", icon: Tablet },
       { href: "/admin/work-parties", label: "Work Parties", icon: Hammer },
       {
         href: "/admin/lodge-instructions",
         label: "Lodge Instructions",
         icon: BookOpen,
       },
-      { href: "/admin/lodge", label: "Lodge Kiosk", icon: Tablet },
     ],
   },
   {
     label: "Monitoring & Support",
     items: [
-      { href: "/admin/stuck-states", label: "Stuck States", icon: AlertTriangle },
+      { href: "/admin/issue-reports", label: "Issue Reports", icon: Bug },
+      {
+        href: "/admin/stuck-states",
+        label: "Stuck States",
+        icon: AlertTriangle,
+      },
       { href: "/admin/health", label: "System Health", icon: Activity },
       {
         href: "/admin/email-deliverability",
@@ -195,19 +255,7 @@ const navSections: NavSection[] = [
       },
       { href: "/admin/image-manager", label: "Image Manager", icon: Images },
       { href: "/admin/rooms-beds", label: "Rooms & Beds", icon: BedDouble },
-      {
-        href: "/admin/seasons",
-        label: "Hut Fees & Seasons",
-        icon: CalendarRange,
-      },
-      { href: "/admin/age-tier-settings", label: "Age Groups", icon: Sliders },
       { href: "/admin/member-fields", label: "Member Fields", icon: Sliders },
-      { href: "/admin/promo-codes", label: "Promo Codes", icon: Tag },
-      {
-        href: "/admin/booking-policies",
-        label: "Booking Policies",
-        icon: XCircle,
-      },
       {
         href: "/admin/notifications",
         label: "Notifications & Email",
@@ -394,6 +442,29 @@ function usePendingMembershipCancellations(): number {
   return count;
 }
 
+function usePendingIssueReports(): number {
+  const [count, setCount] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    fetch("/api/admin/issue-reports?status=OPEN&pageSize=1")
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data) => {
+        if (!cancelled && typeof data?.total === "number") {
+          setCount(data.total);
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return count;
+}
+
 function SidebarLinks({
   features,
   onNavigate,
@@ -408,7 +479,44 @@ function SidebarLinks({
   const pendingBookingRequests = usePendingBookingRequests();
   const pendingCreditApprovals = usePendingCreditApprovals();
   const pendingMembershipCancellations = usePendingMembershipCancellations();
+  const pendingIssueReports = usePendingIssueReports();
   const visibleNavSections = getVisibleAdminNavSections(features);
+
+  // Per-section expand state, keyed by label. Starts collapsed (empty map) so
+  // server and first client render match; the stored preference is applied
+  // after mount. "Needs Attention" is never collapsible.
+  const [expandedSections, setExpandedSections] = useState<
+    Record<string, boolean>
+  >({});
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(SIDEBAR_COLLAPSE_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as unknown;
+        if (parsed && typeof parsed === "object") {
+          setExpandedSections(parsed as Record<string, boolean>);
+        }
+      }
+    } catch {
+      // Unavailable or malformed storage; fall back to all collapsed.
+    }
+  }, []);
+
+  const toggleSection = (label: string) => {
+    setExpandedSections((prev) => {
+      const next = { ...prev, [label]: !prev[label] };
+      try {
+        window.localStorage.setItem(
+          SIDEBAR_COLLAPSE_STORAGE_KEY,
+          JSON.stringify(next),
+        );
+      } catch {
+        // Storage unavailable; state still updates for this session.
+      }
+      return next;
+    });
+  };
 
   // Map href -> badge count
   const badges: Record<string, number> = {};
@@ -428,6 +536,23 @@ function SidebarLinks({
   if (pendingMembershipCancellations > 0) {
     badges["/admin/membership-cancellations"] = pendingMembershipCancellations;
   }
+  if (pendingIssueReports > 0) {
+    badges["/admin/issue-reports"] = pendingIssueReports;
+  }
+
+  // The "Needs Attention" section is queue-driven: drop links whose queue is
+  // empty, and the whole section (header included) once nothing is pending, so
+  // it only ever shows work that genuinely needs attention.
+  const renderedNavSections = visibleNavSections
+    .map((section) =>
+      section.label === NEEDS_ATTENTION_LABEL
+        ? {
+            ...section,
+            items: section.items.filter((item) => (badges[item.href] ?? 0) > 0),
+          }
+        : section,
+    )
+    .filter((section) => section.items.length > 0);
 
   // Highlight the most specific nav item whose href is a prefix of the current
   // path, so nested routes (e.g. /admin/xero/setup) activate the deepest match
@@ -448,55 +573,81 @@ function SidebarLinks({
         Member Dashboard
       </Link>
       <div className="my-1.5 border-t border-border" />
-      {visibleNavSections.map((section, sIdx) => (
-        <div key={sIdx}>
-          {section.label && (
-            <p className="px-3 pt-3 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-              {section.label}
-            </p>
-          )}
-          {section.items.map(({ href, label, icon: Icon }) => {
-            const active = href === activeHref;
-            const badgeCount = badges[href];
-            const badgeClasses =
-              href === "/admin/refund-requests"
-                ? "bg-red-600 text-white"
-                : "bg-orange-500 text-white";
+      {renderedNavSections.map((section, sIdx) => {
+        // Every labeled section collapses except "Needs Attention"; the
+        // label-less top section (Admin Dashboard) is always shown.
+        const collapsible =
+          Boolean(section.label) && section.label !== NEEDS_ATTENTION_LABEL;
+        const open =
+          !collapsible || (expandedSections[section.label as string] ?? false);
 
-            return (
-              <Link
-                key={href}
-                href={href}
-                onClick={onNavigate}
-                className={cn(
-                  "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
-                  active
-                    ? "app-nav-link-active"
-                    : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
-                )}
-              >
-                <Icon
-                  className={cn(
-                    "h-4 w-4 shrink-0",
-                    active ? "text-current" : "text-muted-foreground",
-                  )}
-                />
-                <span className="flex-1">{label}</span>
-                {badgeCount != null && badgeCount > 0 && (
-                  <span
+        return (
+          <div key={sIdx}>
+            {section.label &&
+              (collapsible ? (
+                <button
+                  type="button"
+                  onClick={() => toggleSection(section.label as string)}
+                  aria-expanded={open}
+                  className="flex w-full items-center gap-1 rounded-md px-3 pt-3 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground transition-colors hover:text-foreground"
+                >
+                  <ChevronRight
                     className={cn(
-                      "ml-auto inline-flex h-5 min-w-[20px] items-center justify-center rounded-full px-1.5 text-[11px] font-semibold",
-                      badgeClasses,
+                      "h-3 w-3 shrink-0 transition-transform",
+                      open && "rotate-90",
+                    )}
+                  />
+                  <span>{section.label}</span>
+                </button>
+              ) : (
+                <p className="px-3 pt-3 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  {section.label}
+                </p>
+              ))}
+            {open &&
+              section.items.map(({ href, label, icon: Icon }) => {
+                const active = href === activeHref;
+                const badgeCount = badges[href];
+                const badgeClasses =
+                  href === "/admin/refund-requests"
+                    ? "bg-red-600 text-white"
+                    : "bg-orange-500 text-white";
+
+                return (
+                  <Link
+                    key={href}
+                    href={href}
+                    onClick={onNavigate}
+                    className={cn(
+                      "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                      active
+                        ? "app-nav-link-active"
+                        : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
                     )}
                   >
-                    {badgeCount > 99 ? "99+" : badgeCount}
-                  </span>
-                )}
-              </Link>
-            );
-          })}
-        </div>
-      ))}
+                    <Icon
+                      className={cn(
+                        "h-4 w-4 shrink-0",
+                        active ? "text-current" : "text-muted-foreground",
+                      )}
+                    />
+                    <span className="flex-1">{label}</span>
+                    {badgeCount != null && badgeCount > 0 && (
+                      <span
+                        className={cn(
+                          "ml-auto inline-flex h-5 min-w-[20px] items-center justify-center rounded-full px-1.5 text-[11px] font-semibold",
+                          badgeClasses,
+                        )}
+                      >
+                        {badgeCount > 99 ? "99+" : badgeCount}
+                      </span>
+                    )}
+                  </Link>
+                );
+              })}
+          </div>
+        );
+      })}
     </nav>
   );
 }

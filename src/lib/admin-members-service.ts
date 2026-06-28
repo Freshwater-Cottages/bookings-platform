@@ -24,10 +24,18 @@ import { validateInheritEmailSource } from "@/lib/member-email-inheritance";
 import { buildParentLinks } from "@/lib/member-parent-links";
 import { isXeroLiveMemberGroupLookupsEnabled } from "@/lib/xero-feature-flags";
 import { getMemberSetupInviteExpiryDate } from "@/lib/member-setup-invite";
-import { ensureNotRequiredSubscriptionForRole } from "@/lib/member-subscription-defaults";
+import {
+  ensureNotRequiredSubscriptionForRole,
+  roleNeverRequiresSubscription,
+} from "@/lib/member-subscription-defaults";
 import { issueActionToken } from "@/lib/action-tokens";
 import { hasMemberCompletedAccountSetup } from "@/lib/password-reset";
 import { nameField } from "@/lib/zod-helpers";
+import {
+  OPERATIONAL_ROLE_VALUES,
+  ROLE_VALUES,
+  isRole,
+} from "@/lib/member-roles";
 
 const maxStr = (len: number) => z.string().max(len).optional().nullable();
 
@@ -68,7 +76,7 @@ export const createMemberSchema = z.object({
     .optional()
     .nullable(),
   role: z
-    .enum(["MEMBER", "ADMIN", "LODGE", "ASSOCIATE", "LIFE"])
+    .enum(ROLE_VALUES)
     .default("MEMBER"),
   financeAccessLevel: z.enum(["NONE", "VIEWER", "MANAGER"]).default("NONE"),
   ageTier: ageTierEnum.optional(),
@@ -236,7 +244,7 @@ export async function listAdminMembers(
       .map((setting) => setting.tier),
   );
   const notRequiredSubscriptionConditions = [
-    { role: "ADMIN" },
+    { role: { in: [...OPERATIONAL_ROLE_VALUES] } },
     ...(notRequiredAgeTiers.size > 0
       ? [{ ageTier: { in: Array.from(notRequiredAgeTiers) } }]
       : []),
@@ -314,7 +322,7 @@ export async function listAdminMembers(
   }
 
   // Filter: role
-  if (roleFilter && (roleFilter === "MEMBER" || roleFilter === "ADMIN")) {
+  if (isRole(roleFilter)) {
     andConditions.push({ role: roleFilter });
   }
 
@@ -417,7 +425,7 @@ export async function listAdminMembers(
     andConditions.push({ OR: notRequiredSubscriptionConditions });
   } else if (subscriptionFilter === "NONE") {
     andConditions.push(
-      { role: { not: "ADMIN" } },
+      { role: { notIn: [...OPERATIONAL_ROLE_VALUES] } },
       {
         subscriptions: { none: { seasonYear: currentSeasonYear } },
       },
@@ -429,7 +437,7 @@ export async function listAdminMembers(
     )
   ) {
     andConditions.push(
-      { role: { not: "ADMIN" } },
+      { role: { notIn: [...OPERATIONAL_ROLE_VALUES] } },
       {
         subscriptions: {
           some: { seasonYear: currentSeasonYear, status: subscriptionFilter },
@@ -619,11 +627,11 @@ export async function listAdminMembers(
     return {
       ...m,
       subscriptionStatus:
-        m.role === "ADMIN" || notRequiredAgeTiers.has(m.ageTier)
+        roleNeverRequiresSubscription(m.role) || notRequiredAgeTiers.has(m.ageTier)
           ? "NOT_REQUIRED"
           : (m.subscriptions[0]?.status ?? null),
       subscriptionXeroInvoiceId:
-        m.role === "ADMIN" || notRequiredAgeTiers.has(m.ageTier)
+        roleNeverRequiresSubscription(m.role) || notRequiredAgeTiers.has(m.ageTier)
           ? null
           : (m.subscriptions[0]?.xeroInvoiceId ?? null),
       familyGroups: m.familyGroupMemberships.map((fg) => ({

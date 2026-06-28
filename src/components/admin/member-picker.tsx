@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { isOperationalRole } from "@/lib/member-roles";
 
 interface PickedMember {
   id: string;
@@ -45,9 +46,9 @@ export function MemberPicker({ onSelect, selected, onClear }: MemberPickerProps)
         const res = await fetch(`/api/admin/members?${params}`);
         if (res.ok) {
           const data = await res.json();
-          // Filter out ADMIN role members — they are committee accounts, not bookable
+          // Filter out operational accounts — they are not bookable members.
           const members = (data.members || []).filter(
-            (m: PickedMember & { role?: string }) => m.role !== "ADMIN" && m.role !== "LODGE"
+            (m: PickedMember & { role?: string }) => !isOperationalRole(m.role)
           );
           setResults(members);
           setShowDropdown(true);
