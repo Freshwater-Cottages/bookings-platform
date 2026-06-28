@@ -349,6 +349,24 @@ describe("Phase 3: Admin Member Management", () => {
       expect(call.where?.AND).toEqual(expect.arrayContaining([{ role: "ADMIN" }]));
     });
 
+    it("excludes operational and non-member roles from the unpaid subscription filter", async () => {
+      mockedAuth.mockResolvedValue(adminSession);
+      vi.mocked(prisma.member.findMany).mockResolvedValue([]);
+      mockSessionAndMemberListCounts(0);
+
+      await getMembers(
+        new NextRequest("http://localhost/api/admin/members?subscription=NONE")
+      );
+      const call = vi.mocked(prisma.member.findMany).mock.calls[0][0]!;
+      // NON_MEMBER and SCHOOL records never owe a subscription, so they must not
+      // surface alongside members in the "no subscription" filter.
+      expect(call.where?.AND).toEqual(
+        expect.arrayContaining([
+          { role: { notIn: ["ADMIN", "LODGE", "NON_MEMBER", "SCHOOL"] } },
+        ])
+      );
+    });
+
     it("filters by finance access level", async () => {
       mockedAuth.mockResolvedValue(adminSession);
       vi.mocked(prisma.member.findMany).mockResolvedValue([]);
@@ -465,7 +483,7 @@ describe("Phase 3: Admin Member Management", () => {
       await getMembers(new NextRequest("http://localhost/api/admin/members?subscription=NONE"));
       const call = vi.mocked(prisma.member.findMany).mock.calls[0][0]!;
       expect(call.where?.AND).toEqual(expect.arrayContaining([
-        { role: { notIn: ["ADMIN", "LODGE"] } },
+        { role: { notIn: ["ADMIN", "LODGE", "NON_MEMBER", "SCHOOL"] } },
         { subscriptions: { none: { seasonYear: 2026 } } },
       ]));
     });
@@ -547,7 +565,7 @@ describe("Phase 3: Admin Member Management", () => {
       expect(call.where?.AND).toEqual(expect.arrayContaining([
         {
           OR: expect.arrayContaining([
-            { role: { in: ["ADMIN", "LODGE"] } },
+            { role: { in: ["ADMIN", "LODGE", "NON_MEMBER", "SCHOOL"] } },
             { ageTier: { in: expect.arrayContaining(["INFANT", "CHILD"]) } },
           ]),
         },
@@ -735,7 +753,7 @@ describe("Phase 3: Admin Member Management", () => {
         { passwordResetTokens: { some: { used: false, expiresAt: { gt: expect.any(Date) } } } },
         {
           OR: expect.arrayContaining([
-            { role: { in: ["ADMIN", "LODGE"] } },
+            { role: { in: ["ADMIN", "LODGE", "NON_MEMBER", "SCHOOL"] } },
             { ageTier: { in: expect.arrayContaining(["INFANT", "CHILD"]) } },
           ]),
         },

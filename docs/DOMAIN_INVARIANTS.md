@@ -64,7 +64,10 @@ contact/link history where required.
 Access role, seasonal membership type, and committee assignment are separate
 axes. `Member.role` controls application access, `SeasonalMembershipAssignment`
 stores per-season membership policy, and committee assignment controls public
-committee/contact presentation only. Do not add committee positions to
+committee/contact presentation only. The `Member.role` axis also carries two
+non-member classification values, `NON_MEMBER` and `SCHOOL`, used by the
+booking-request flows for non-login records; these grant no access, stay out of
+member rosters, and never owe a subscription. Do not add committee positions to
 `Member.role`, and do not make booking, subscription, or Xero behavior depend on
 membership type until the explicit enforcement issue changes those paths.
 Seasonal membership type changes require a guarded admin preview and reasoned

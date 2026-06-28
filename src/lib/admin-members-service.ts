@@ -32,6 +32,7 @@ import { issueActionToken } from "@/lib/action-tokens";
 import { hasMemberCompletedAccountSetup } from "@/lib/password-reset";
 import { nameField } from "@/lib/zod-helpers";
 import {
+  NON_MEMBER_ROLE_VALUES,
   OPERATIONAL_ROLE_VALUES,
   ROLE_VALUES,
   isRole,
@@ -244,7 +245,7 @@ export async function listAdminMembers(
       .map((setting) => setting.tier),
   );
   const notRequiredSubscriptionConditions = [
-    { role: { in: [...OPERATIONAL_ROLE_VALUES] } },
+    { role: { in: [...OPERATIONAL_ROLE_VALUES, ...NON_MEMBER_ROLE_VALUES] } },
     ...(notRequiredAgeTiers.size > 0
       ? [{ ageTier: { in: Array.from(notRequiredAgeTiers) } }]
       : []),
@@ -425,7 +426,7 @@ export async function listAdminMembers(
     andConditions.push({ OR: notRequiredSubscriptionConditions });
   } else if (subscriptionFilter === "NONE") {
     andConditions.push(
-      { role: { notIn: [...OPERATIONAL_ROLE_VALUES] } },
+      { role: { notIn: [...OPERATIONAL_ROLE_VALUES, ...NON_MEMBER_ROLE_VALUES] } },
       {
         subscriptions: { none: { seasonYear: currentSeasonYear } },
       },
@@ -437,7 +438,7 @@ export async function listAdminMembers(
     )
   ) {
     andConditions.push(
-      { role: { notIn: [...OPERATIONAL_ROLE_VALUES] } },
+      { role: { notIn: [...OPERATIONAL_ROLE_VALUES, ...NON_MEMBER_ROLE_VALUES] } },
       {
         subscriptions: {
           some: { seasonYear: currentSeasonYear, status: subscriptionFilter },
