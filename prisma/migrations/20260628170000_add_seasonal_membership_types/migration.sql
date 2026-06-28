@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS "MembershipType" (
   "subscriptionBehavior" "MembershipTypeSubscriptionBehavior" NOT NULL DEFAULT 'REQUIRED',
   "sortOrder" INTEGER NOT NULL DEFAULT 0,
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" TIMESTAMP(3) NOT NULL,
   CONSTRAINT "MembershipType_pkey" PRIMARY KEY ("id")
 );
 
@@ -51,7 +51,7 @@ CREATE TABLE IF NOT EXISTS "SeasonalMembershipAssignment" (
   "membershipTypeId" TEXT NOT NULL,
   "assignedByMemberId" TEXT,
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" TIMESTAMP(3) NOT NULL,
   CONSTRAINT "SeasonalMembershipAssignment_pkey" PRIMARY KEY ("id")
 );
 
@@ -90,7 +90,8 @@ INSERT INTO "MembershipType" (
   "isBuiltIn",
   "bookingBehavior",
   "subscriptionBehavior",
-  "sortOrder"
+  "sortOrder",
+  "updatedAt"
 ) VALUES
   (
     'builtin-membership-type-full',
@@ -101,7 +102,8 @@ INSERT INTO "MembershipType" (
     true,
     'MEMBER_RATE',
     'REQUIRED',
-    0
+    0,
+    CURRENT_TIMESTAMP
   ),
   (
     'builtin-membership-type-associate',
@@ -112,7 +114,8 @@ INSERT INTO "MembershipType" (
     true,
     'NON_MEMBER_RATE',
     'REQUIRED',
-    1
+    1,
+    CURRENT_TIMESTAMP
   ),
   (
     'builtin-membership-type-reserve',
@@ -123,7 +126,8 @@ INSERT INTO "MembershipType" (
     true,
     'BLOCK_BOOKING',
     'REQUIRED',
-    2
+    2,
+    CURRENT_TIMESTAMP
   ),
   (
     'builtin-membership-type-life',
@@ -134,7 +138,8 @@ INSERT INTO "MembershipType" (
     true,
     'MEMBER_RATE',
     'NOT_REQUIRED',
-    3
+    3,
+    CURRENT_TIMESTAMP
   )
 ON CONFLICT ("key") DO UPDATE
 SET "isBuiltIn" = true;
@@ -162,13 +167,15 @@ INSERT INTO "SeasonalMembershipAssignment" (
   "id",
   "memberId",
   "seasonYear",
-  "membershipTypeId"
+  "membershipTypeId",
+  "updatedAt"
 )
 SELECT
   'seasonal-membership-' || md5(m."id" || ':' || cms.season_year::text),
   m."id",
   cms.season_year,
-  mt."id"
+  mt."id",
+  CURRENT_TIMESTAMP
 FROM "Member" m
 CROSS JOIN current_membership_season cms
 JOIN "MembershipType" mt
