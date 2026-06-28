@@ -18,7 +18,6 @@ import {
   getSanitizedPageContentByPath,
   pageContentHtmlToPlainText,
   sanitizePageContentHtml,
-  sanitizeStructuredContent,
 } from "../page-content-html";
 
 describe("sanitizePageContentHtml", () => {
@@ -102,25 +101,6 @@ describe("pageContentHtmlToPlainText", () => {
   });
 });
 
-describe("sanitizeStructuredContent", () => {
-  it("strips markup from scalar values and row cells while preserving lines", () => {
-    expect(
-      sanitizeStructuredContent({
-        intro: "<p>Hello &amp; welcome</p><script>x()</script>",
-        rows: [
-          {
-            heading: "<strong>First</strong>",
-            body: "One<br>Two",
-          },
-        ],
-      }),
-    ).toEqual({
-      intro: "Hello & welcome",
-      rows: [{ heading: "First", body: "One\nTwo" }],
-    });
-  });
-});
-
 describe("getSanitizedPageContentByPath", () => {
   beforeEach(() => {
     mocks.pageContentFindUnique.mockReset();
@@ -142,15 +122,11 @@ describe("getSanitizedPageContentByPath", () => {
       path: "/about",
       sortOrder: 10,
       contentHtml: "<p>ok</p><script>alert(1)</script>",
-      structuredContent: {
-        intro: '<img src=x onerror="alert(1)">Plain',
-      },
     });
 
     const page = await getSanitizedPageContentByPath("/about");
 
     expect(page?.contentHtml).toBe("<p>ok</p>");
     expect(page?.headerText).toBe('<img src="x" />Welcome');
-    expect(page?.structuredContent).toEqual({ intro: "Plain" });
   });
 });
