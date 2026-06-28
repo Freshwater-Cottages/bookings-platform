@@ -87,6 +87,9 @@ export function MemberBulkDialog({
               <SelectContent>
                 <SelectItem value="MEMBER">Member</SelectItem>
                 <SelectItem value="ADMIN">Admin</SelectItem>
+                <SelectItem value="LODGE">Lodge</SelectItem>
+                <SelectItem value="ASSOCIATE">Associate Member</SelectItem>
+                <SelectItem value="LIFE">Life Member</SelectItem>
               </SelectContent>
             </Select>
           </div>

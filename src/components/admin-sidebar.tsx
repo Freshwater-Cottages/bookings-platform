@@ -65,7 +65,18 @@ interface NavSection {
   items: Array<{ href: string; label: string; icon: typeof LayoutDashboard }>;
 }
 
+/**
+ * Label of the queue-driven section whose items are shown only when they have
+ * something pending. The section (and its header) disappears entirely once all
+ * its queues are clear, so it never implies work that isn't there.
+ */
 const NEEDS_ATTENTION_LABEL = "Needs Attention";
+
+/**
+ * localStorage key holding the admin's per-section expand/collapse state, as a
+ * `{ [sectionLabel]: boolean }` map. Sections default to collapsed; only the
+ * labels the user has expanded are persisted as `true`.
+ */
 const SIDEBAR_COLLAPSE_STORAGE_KEY = "admin-sidebar:expanded-sections";
 
 const navSections: NavSection[] = [
@@ -79,6 +90,9 @@ const navSections: NavSection[] = [
     ],
   },
   {
+    // Queue-driven alerts. Every item here is also reachable from its natural
+    // section below; these are duplicate links that surface only while their
+    // queue has something pending (see the filtering in SidebarLinks).
     label: NEEDS_ATTENTION_LABEL,
     items: [
       {
@@ -202,7 +216,11 @@ const navSections: NavSection[] = [
     label: "Monitoring & Support",
     items: [
       { href: "/admin/issue-reports", label: "Issue Reports", icon: Bug },
-      { href: "/admin/stuck-states", label: "Stuck States", icon: AlertTriangle },
+      {
+        href: "/admin/stuck-states",
+        label: "Stuck States",
+        icon: AlertTriangle,
+      },
       { href: "/admin/health", label: "System Health", icon: Activity },
       {
         href: "/admin/email-deliverability",
@@ -480,6 +498,10 @@ function SidebarLinks({
   const pendingCreditApprovals = usePendingCreditApprovals();
   const pendingMembershipCancellations = usePendingMembershipCancellations();
   const pendingIssueReports = usePendingIssueReports();
+
+  // Per-section expand state, keyed by label. Starts collapsed (empty map) so
+  // server and first client render match; the stored preference is applied
+  // after mount. "Needs Attention" is never collapsible.
   const [expandedSections, setExpandedSections] = useState<
     Record<string, boolean>
   >({});
@@ -487,30 +509,28 @@ function SidebarLinks({
   useEffect(() => {
     try {
       const raw = window.localStorage.getItem(SIDEBAR_COLLAPSE_STORAGE_KEY);
-      if (!raw) return;
-
-      const parsed = JSON.parse(raw) as unknown;
-      if (parsed && typeof parsed === "object") {
-        setExpandedSections(parsed as Record<string, boolean>);
+      if (raw) {
+        const parsed = JSON.parse(raw) as unknown;
+        if (parsed && typeof parsed === "object") {
+          setExpandedSections(parsed as Record<string, boolean>);
+        }
       }
     } catch {
-      // Storage can be unavailable or malformed; the sidebar still works.
+      // Unavailable or malformed storage; fall back to all collapsed.
     }
   }, []);
 
   const toggleSection = (label: string) => {
-    setExpandedSections((current) => {
-      const next = { ...current, [label]: !current[label] };
-
+    setExpandedSections((prev) => {
+      const next = { ...prev, [label]: !prev[label] };
       try {
         window.localStorage.setItem(
           SIDEBAR_COLLAPSE_STORAGE_KEY,
           JSON.stringify(next),
         );
       } catch {
-        // Storage unavailable; keep the in-memory state for this session.
+        // Storage unavailable; state still updates for this session.
       }
-
       return next;
     });
   };
@@ -560,6 +580,8 @@ function SidebarLinks({
       </Link>
       <div className="my-1.5 border-t border-border" />
       {renderedNavSections.map((section, sIdx) => {
+        // Every labeled section collapses except "Needs Attention"; the
+        // label-less top section (Admin Dashboard) is always shown.
         const collapsible =
           Boolean(section.label) && section.label !== NEEDS_ATTENTION_LABEL;
         const open =

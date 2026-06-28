@@ -18,6 +18,9 @@ describe("feature route map", () => {
     expect(getRequiredFeaturesForPath("/finance")).toEqual([
       "financeDashboard",
     ]);
+    expect(
+      getRequiredFeaturesForPath("/api/admin/setup/finance-report-mappings")
+    ).toEqual(["financeDashboard"]);
     expect(getRequiredFeaturesForPath("/admin/waitlist")).toEqual(["waitlist"]);
     expect(getRequiredFeaturesForPath("/admin/xero/records")).toEqual([
       "xeroIntegration",
@@ -121,6 +124,12 @@ describe("feature route map", () => {
         internetBankingPayments: false,
       })
     ).toBe("internetBankingPayments");
+    expect(
+      getDisabledFeatureForPath(
+        "/api/admin/setup/finance-report-mappings/backfill",
+        { ...allOn, financeDashboard: false }
+      )
+    ).toBe("financeDashboard");
   });
 
   it("uses the admin module toggle for effective state", () => {

@@ -16,6 +16,10 @@ import {
   loadMembershipCancellationSettings,
   type MembershipCancellationSettings,
 } from "@/lib/membership-cancellation-settings";
+import {
+  MEMBER_LEVEL_ROLE_VALUES,
+  isMemberLevelRole,
+} from "@/lib/member-roles";
 import { prisma } from "@/lib/prisma";
 
 export const MEMBERSHIP_CANCELLATION_CONFIRMATION_TTL_MS =
@@ -296,7 +300,7 @@ function toCandidate(
 ): MembershipCancellationCandidate {
   const relationship = relationshipForMember(member, requesterId);
   const requiresOwnConfirmation = member.id !== requesterId && member.canLogin;
-  const roleAllowed = member.role === "MEMBER";
+  const roleAllowed = isMemberLevelRole(member.role);
   const activeAllowed = member.active && !member.cancelledAt;
   const eligible = roleAllowed && activeAllowed && !activeParticipant;
 
@@ -362,7 +366,7 @@ async function loadCancellationCandidates(requesterMemberId: string) {
   if (
     !currentMember.active ||
     !currentMember.canLogin ||
-    currentMember.role !== "MEMBER"
+    !isMemberLevelRole(currentMember.role)
   ) {
     throw new MembershipCancellationRequestError(
       "Membership cancellation requests are only available to active login-capable member accounts",
@@ -376,7 +380,7 @@ async function loadCancellationCandidates(requesterMemberId: string) {
   const relatedMembers = await prisma.member.findMany({
     where: {
       active: true,
-      role: "MEMBER",
+      role: { in: [...MEMBER_LEVEL_ROLE_VALUES] },
       OR: [
         { id: currentMember.id },
         ...(groupIds.length > 0
@@ -710,7 +714,7 @@ export async function createAdminMembershipCancellationRequest({
     throw new MembershipCancellationRequestError("Member not found", 404);
   }
 
-  if (target.role !== "MEMBER") {
+  if (!isMemberLevelRole(target.role)) {
     throw new MembershipCancellationRequestError(
       "Only member accounts can be cancelled",
       422,

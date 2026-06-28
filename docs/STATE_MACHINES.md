@@ -90,6 +90,13 @@ admin-configurable under Booking Policies -> Public Booking Requests. The
 rotating the response token so the reminder email carries a fresh working link
 (set the reminder lead to 0 to disable reminders).
 
+School group requests share this quote lifecycle. The public form shows a soft
+warning above 25 total students, teachers, and parent helpers because a club
+member must host larger groups, but the hard submission limit remains lodge
+capacity. Before approval, admins can adjust the bulk child counts; approval
+regenerates the school guest list from the preserved teachers/parent helpers and
+the adjusted counts, then reprices and rechecks capacity against that final list.
+
 ## Payment Lifecycle
 
 Known statuses: `PENDING`, `PROCESSING`, `SUCCEEDED`, `FAILED`, `REFUNDED`,

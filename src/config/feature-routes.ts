@@ -25,7 +25,11 @@ export const FEATURE_ROUTE_RULES: FeatureRouteRule[] = [
   },
   {
     flag: "financeDashboard",
-    prefixes: ["/finance", "/api/finance"],
+    prefixes: [
+      "/finance",
+      "/api/finance",
+      "/api/admin/setup/finance-report-mappings",
+    ],
   },
   {
     flag: "waitlist",

@@ -4,11 +4,12 @@ import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
+import { ROLE_VALUES } from "@/lib/member-roles";
 
 const bulkUpdateSchema = z.object({
   ids: z.array(z.string()).min(1, "At least one member ID is required").max(100),
   action: z.enum(["deactivate", "reactivate", "set-role"]),
-  role: z.enum(["MEMBER", "ADMIN"]).optional(),
+  role: z.enum(ROLE_VALUES).optional(),
 }).refine(
   (data) => data.action !== "set-role" || data.role !== undefined,
   { message: "Role is required for set-role action", path: ["role"] }
@@ -48,7 +49,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  if (action === "set-role" && role === "MEMBER" && ids.includes(currentUserId)) {
+  if (action === "set-role" && role !== "ADMIN" && ids.includes(currentUserId)) {
     return NextResponse.json(
       { error: "You cannot demote your own admin account" },
       { status: 400 }
@@ -107,7 +108,7 @@ export async function POST(req: NextRequest) {
     // Filter out current user for self-protection
     const idsToUpdate = [...existingIds].filter((id) => {
       if (action === "deactivate" && id === currentUserId) return false;
-      if (action === "set-role" && role === "MEMBER" && id === currentUserId) return false;
+      if (action === "set-role" && role !== "ADMIN" && id === currentUserId) return false;
       return true;
     });
 

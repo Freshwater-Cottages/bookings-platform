@@ -19,6 +19,39 @@ import { Textarea } from "@/components/ui/textarea";
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
 import { formatNZDate, formatNZDateTime } from "@/lib/nzst-date";
 import { formatCents } from "@/lib/utils";
+import { SCHOOL_GROUP_SOFT_CAP } from "@/lib/school-booking-constants";
+
+// Bulk child tiers a school group is counted in. Teachers/parent helpers are
+// ADULT and are not adjusted here.
+const SCHOOL_CHILD_TIERS = ["INFANT", "CHILD", "YOUTH"] as const;
+type SchoolChildTier = (typeof SCHOOL_CHILD_TIERS)[number];
+const SCHOOL_CHILD_TIER_LABELS: Record<SchoolChildTier, string> = {
+  INFANT: "Infants",
+  CHILD: "Children",
+  YOUTH: "Youth",
+};
+
+/** Count a request's bulk children per tier from its guest snapshot. */
+function deriveChildCounts(
+  guests: Array<{ ageTier: string }>,
+): Record<SchoolChildTier, string> {
+  const counts: Record<SchoolChildTier, number> = { INFANT: 0, CHILD: 0, YOUTH: 0 };
+  for (const guest of guests) {
+    if ((SCHOOL_CHILD_TIERS as readonly string[]).includes(guest.ageTier)) {
+      counts[guest.ageTier as SchoolChildTier] += 1;
+    }
+  }
+  return {
+    INFANT: String(counts.INFANT),
+    CHILD: String(counts.CHILD),
+    YOUTH: String(counts.YOUTH),
+  };
+}
+
+function parseCount(value: string): number {
+  const parsed = Math.floor(Number(value));
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
 
 type PublicRequestFilter =
   | "QUEUE"
@@ -226,6 +259,9 @@ export function PublicBookingRequestsPanel({
   const [memberResults, setMemberResults] = useState<
     Record<string, MemberSearchResult[]>
   >({});
+  const [countInputs, setCountInputs] = useState<
+    Record<string, Record<SchoolChildTier, string>>
+  >({});
   const [declineReasons, setDeclineReasons] = useState<Record<string, string>>({});
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -319,6 +355,22 @@ export function PublicBookingRequestsPanel({
     }
     if (optionId === "STANDARD") return priceInputValue(request);
     return "";
+  }
+
+  function childCountValues(
+    request: PublicBookingRequestData,
+  ): Record<SchoolChildTier, string> {
+    return countInputs[request.id] ?? deriveChildCounts(request.guests);
+  }
+
+  // Teachers/parent helpers (ADULT) plus the current (possibly edited) children.
+  function plannedGuestTotal(request: PublicBookingRequestData) {
+    const counts = childCountValues(request);
+    const children = SCHOOL_CHILD_TIERS.reduce(
+      (sum, tier) => sum + parseCount(counts[tier]),
+      0,
+    );
+    return request.teachers.length + children;
   }
 
   function dollarsToCents(raw: string) {
@@ -498,8 +550,24 @@ export function PublicBookingRequestsPanel({
     setError("");
     setSuccess("");
     try {
+      // Only send a quantity override when the admin actually edited the school
+      // group's child counts; otherwise approve with the submitted numbers.
+      const hasCountOverride = request.type === "SCHOOL" && request.id in countInputs;
+      const counts = childCountValues(request);
       const response = await fetch(`/api/admin/booking-requests/${request.id}/approve`, {
         method: "POST",
+        ...(hasCountOverride
+          ? {
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                childCounts: {
+                  INFANT: parseCount(counts.INFANT),
+                  CHILD: parseCount(counts.CHILD),
+                  YOUTH: parseCount(counts.YOUTH),
+                },
+              }),
+            }
+          : {}),
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
@@ -672,7 +740,7 @@ export function PublicBookingRequestsPanel({
 
                   {request.type === "SCHOOL" && request.teachers.length > 0 ? (
                     <div className="text-sm">
-                      <span className="text-muted-foreground">Teachers (hut leaders):</span>{" "}
+                      <span className="text-muted-foreground">Teachers &amp; parent helpers (hut leaders):</span>{" "}
                       {request.teachers
                         .map((teacher) => `${teacher.firstName} ${teacher.lastName}`)
                         .join(", ")}
@@ -746,6 +814,53 @@ export function PublicBookingRequestsPanel({
                     "MODIFICATION_REQUESTED",
                   ].includes(request.status) ? (
                     <div className="space-y-3 rounded-md border border-slate-200 p-3">
+                      {request.type === "SCHOOL" ? (
+                        <div className="space-y-2">
+                          <Label>Adjust group numbers</Label>
+                          <div className="flex flex-wrap items-end gap-3">
+                            {SCHOOL_CHILD_TIERS.map((tier) => (
+                              <div key={tier} className="space-y-1">
+                                <Label
+                                  htmlFor={`count-${tier}-${request.id}`}
+                                  className="text-xs text-muted-foreground"
+                                >
+                                  {SCHOOL_CHILD_TIER_LABELS[tier]}
+                                </Label>
+                                <Input
+                                  id={`count-${tier}-${request.id}`}
+                                  type="number"
+                                  min="0"
+                                  className="w-24"
+                                  value={childCountValues(request)[tier]}
+                                  onChange={(event) =>
+                                    setCountInputs((prev) => {
+                                      const current =
+                                        prev[request.id] ?? deriveChildCounts(request.guests);
+                                      return {
+                                        ...prev,
+                                        [request.id]: { ...current, [tier]: event.target.value },
+                                      };
+                                    })
+                                  }
+                                />
+                              </div>
+                            ))}
+                          </div>
+                          <p className="text-xs text-muted-foreground">
+                            {request.teachers.length} teachers &amp; helpers + children ={" "}
+                            {plannedGuestTotal(request)} total. Teachers &amp; parent helpers
+                            can&apos;t be changed here. Decline and ask the school to resubmit if
+                            those change.
+                          </p>
+                          {plannedGuestTotal(request) > SCHOOL_GROUP_SOFT_CAP ? (
+                            <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                              Over {SCHOOL_GROUP_SOFT_CAP}: confirm a club member is staying with the
+                              group before approving.
+                            </p>
+                          ) : null}
+                        </div>
+                      ) : null}
+
                       <div className="grid gap-3 md:grid-cols-[220px_1fr]">
                         <div className="space-y-1">
                           <Label htmlFor={`pricing-mode-${request.id}`}>Pricing mode</Label>
@@ -974,7 +1089,7 @@ export function PublicBookingRequestsPanel({
                       {request.status === "VERIFIED" ? (
                         <p className="text-xs text-muted-foreground">
                           {request.type === "SCHOOL"
-                            ? "Save and send a quote so the school can accept or request changes."
+                            ? "Adjust group numbers if needed, then save and send a quote so the school can accept or request changes."
                             : "Save and send a quote so the requester can accept, cancel, query, or request changes."}
                         </p>
                       ) : null}

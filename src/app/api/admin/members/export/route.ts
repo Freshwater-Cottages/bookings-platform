@@ -8,6 +8,11 @@ import { getAgeTierSettings } from "@/lib/age-tier";
 import { formatGenderLabel, formatTitleLabel } from "@/lib/member-enums";
 import { loadMemberFieldsFlags } from "@/lib/member-fields-settings";
 import { createAuditLog } from "@/lib/audit";
+import {
+  OPERATIONAL_ROLE_VALUES,
+  isRole,
+} from "@/lib/member-roles";
+import { roleNeverRequiresSubscription } from "@/lib/member-subscription-defaults";
 
 const AGE_TIER_VALUES = Object.values(AgeTier);
 const SUBSCRIPTION_STATUS_FILTERS = [
@@ -74,7 +79,7 @@ export async function GET(req: NextRequest) {
       .map((setting) => setting.tier),
   );
   const notRequiredSubscriptionConditions = [
-    { role: "ADMIN" },
+    { role: { in: [...OPERATIONAL_ROLE_VALUES] } },
     ...(notRequiredAgeTiers.size > 0
       ? [{ ageTier: { in: Array.from(notRequiredAgeTiers) } }]
       : []),
@@ -96,7 +101,7 @@ export async function GET(req: NextRequest) {
   }
 
   const roleFilter = sp.get("role");
-  if (roleFilter && (roleFilter === "MEMBER" || roleFilter === "ADMIN")) {
+  if (isRole(roleFilter)) {
     andConditions.push({ role: roleFilter });
   }
 
@@ -189,7 +194,7 @@ export async function GET(req: NextRequest) {
     andConditions.push({ OR: notRequiredSubscriptionConditions });
   } else if (subscriptionFilter === "NONE") {
     andConditions.push(
-      { role: { not: "ADMIN" } },
+      { role: { notIn: [...OPERATIONAL_ROLE_VALUES] } },
       {
         subscriptions: { none: { seasonYear: currentSeasonYear } },
       },
@@ -201,7 +206,7 @@ export async function GET(req: NextRequest) {
     )
   ) {
     andConditions.push(
-      { role: { not: "ADMIN" } },
+      { role: { notIn: [...OPERATIONAL_ROLE_VALUES] } },
       {
         subscriptions: {
           some: { seasonYear: currentSeasonYear, status: subscriptionFilter },
@@ -363,7 +368,7 @@ export async function GET(req: NextRequest) {
         {
           header: "Subscription Status",
           value: (m: MemberRow) =>
-            m.role === "ADMIN" || notRequiredAgeTiers.has(m.ageTier)
+            roleNeverRequiresSubscription(m.role) || notRequiredAgeTiers.has(m.ageTier)
               ? "NOT_REQUIRED"
               : m.subscriptions[0]?.status || "NONE",
         },

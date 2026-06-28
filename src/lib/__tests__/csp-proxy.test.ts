@@ -10,6 +10,7 @@ import {
   CSP_REPORT_ONLY_HEADER,
   SECURITY_HEADERS,
 } from "@/lib/csp";
+import { REQUEST_PATH_HEADER } from "@/lib/internal-return-path";
 import { FEATURE_ROUTE_RULES } from "@/config/feature-routes";
 import { MODULE_KEYS } from "@/config/modules";
 import proxy, { config, getFeatureFlagBlockResponse } from "../../proxy";
@@ -120,6 +121,16 @@ describe("CSP proxy", () => {
     }
   });
 
+  it("exposes the requested path to server components via a request header", async () => {
+    const response = await proxy(
+      new NextRequest("https://example.org/dashboard?tab=bookings")
+    );
+
+    expect(
+      response.headers.get(`x-middleware-request-${REQUEST_PATH_HEADER}`)
+    ).toBe("/dashboard?tab=bookings");
+  });
+
   it("generates a different nonce per request", async () => {
     const a = await proxy(new NextRequest("https://example.org/"));
     const b = await proxy(new NextRequest("https://example.org/"));
@@ -202,6 +213,7 @@ describe("CSP proxy", () => {
       "/api/admin/hut-leaders/123",
       "/api/admin/internet-banking-settings",
       "/api/admin/communications/send",
+      "/api/admin/setup/finance-report-mappings/backfill",
       "/api/admin/mountain-conditions",
       "/api/skifield-whakapapa",
       "/api/skifield-conditions",

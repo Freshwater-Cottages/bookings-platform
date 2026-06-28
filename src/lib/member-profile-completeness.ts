@@ -3,6 +3,7 @@ import {
   STREET_ADDRESS_FIELDS,
   type MemberAddressField,
 } from "@/lib/member-address";
+import { isOperationalRole } from "@/lib/member-roles";
 
 export type MemberProfileConfirmationMode = "self" | "delegated" | "not_allowed";
 
@@ -186,7 +187,7 @@ export function evaluateMemberProfileCompleteness(
   member: MemberProfileCompletenessInput,
   options: MemberProfileCompletenessOptions = {}
 ): MemberProfileCompletenessResult {
-  const confirmationExemptRole = member.role === "ADMIN" || member.role === "LODGE";
+  const confirmationExemptRole = isOperationalRole(member.role);
   const confirmationMode: MemberProfileConfirmationMode =
     member.active === false || confirmationExemptRole
       ? "not_allowed"

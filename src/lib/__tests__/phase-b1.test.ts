@@ -78,6 +78,18 @@ describe("#24: Kiosk Access Tiers", () => {
       expect(tier).toBe("hut-leader");
     });
 
+    it("returns 'hut-leader' for ASSOCIATE and LIFE roles with active assignments", async () => {
+      mockPrisma.hutLeaderAssignment.count.mockResolvedValue(1);
+      const { getKioskAccessTier } = await import("@/lib/kiosk-access");
+
+      await expect(
+        getKioskAccessTier("associate-1", "ASSOCIATE", makeDate("2026-04-08")),
+      ).resolves.toBe("hut-leader");
+      await expect(
+        getKioskAccessTier("life-1", "LIFE", makeDate("2026-04-08")),
+      ).resolves.toBe("hut-leader");
+    });
+
     it("returns 'hut-leader' for MEMBER on day before assignment starts", async () => {
       // Assignment starts 2026-04-09, checking access for 2026-04-08
       // startDate <= nextDay (2026-04-09) && endDate >= date (2026-04-08)
@@ -101,6 +113,19 @@ describe("#24: Kiosk Access Tiers", () => {
       const { getKioskAccessTier } = await import("@/lib/kiosk-access");
       const tier = await getKioskAccessTier("user-1", "MEMBER", makeDate("2026-04-08"));
       expect(tier).toBe("staying-guest");
+    });
+
+    it("returns 'staying-guest' for ASSOCIATE and LIFE roles with visible bookings", async () => {
+      mockPrisma.hutLeaderAssignment.count.mockResolvedValue(0);
+      mockPrisma.booking.count.mockResolvedValue(1);
+      const { getKioskAccessTier } = await import("@/lib/kiosk-access");
+
+      await expect(
+        getKioskAccessTier("associate-1", "ASSOCIATE", makeDate("2026-04-08")),
+      ).resolves.toBe("staying-guest");
+      await expect(
+        getKioskAccessTier("life-1", "LIFE", makeDate("2026-04-08")),
+      ).resolves.toBe("staying-guest");
     });
 
     it("returns 'staying-guest' for MEMBER on day before check-in", async () => {

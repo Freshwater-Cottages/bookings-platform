@@ -41,6 +41,7 @@ import {
 } from "@/lib/member-lifecycle-actions";
 import { nameField } from "@/lib/zod-helpers";
 import { genderEnum, titleEnum } from "@/lib/member-enums";
+import { ROLE_VALUES } from "@/lib/member-roles";
 
 const maxStr = (len: number) => z.string().max(len).optional().nullable();
 
@@ -69,7 +70,7 @@ export const updateMemberSchema = z.object({
     .optional()
     .nullable()
     .or(z.literal("")),
-  role: z.enum(["MEMBER", "ADMIN", "LODGE", "ASSOCIATE", "LIFE"]).optional(),
+  role: z.enum(ROLE_VALUES).optional(),
   financeAccessLevel: z.enum(["NONE", "VIEWER", "MANAGER"]).optional(),
   ageTier: z.enum(["ADULT", "YOUTH", "CHILD", "INFANT"]).optional(),
   active: z.boolean().optional(),
@@ -565,7 +566,7 @@ export async function updateAdminMember(params: {
   }
 
   if (id === currentAdminMemberId) {
-    if (data.role === "MEMBER") {
+    if (data.role !== undefined && data.role !== "ADMIN") {
       return jsonResult(
         { error: "You cannot demote your own admin account" },
         { status: 400 },

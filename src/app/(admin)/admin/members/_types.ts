@@ -6,8 +6,9 @@ import type {
 } from "@prisma/client";
 import type { XeroSearchResult } from "@/components/admin/xero-suggested-contact-card";
 import type { XeroEntranceFeeInvoiceOptions } from "@/lib/admin-xero-entrance-fee";
+import type { AppRole } from "@/lib/member-roles";
 
-export type MemberRole = "MEMBER" | "ADMIN" | "LODGE" | "ASSOCIATE" | "LIFE";
+export type MemberRole = AppRole;
 
 export interface Member {
   id: string;

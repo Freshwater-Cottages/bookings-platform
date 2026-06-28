@@ -1,3 +1,5 @@
+import { isOperationalRole } from "@/lib/member-roles";
+
 export interface BookingFamilyMember {
   relationship: "self" | "partner" | "dependent";
   firstName?: string | null;
@@ -34,8 +36,7 @@ function getMemberName(member: BookingFamilyMember) {
 function isConfirmationExemptAccount(member: BookingFamilyMember) {
   return (
     member.confirmationMode === "not_allowed" ||
-    member.role === "ADMIN" ||
-    member.role === "LODGE"
+    isOperationalRole(member.role)
   );
 }
 

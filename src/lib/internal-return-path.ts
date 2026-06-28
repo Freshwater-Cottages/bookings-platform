@@ -1,3 +1,8 @@
+// Request header set by the proxy (middleware) so server components can read
+// the path being requested — used to build a login callbackUrl that returns the
+// visitor to where they were headed after they sign in.
+export const REQUEST_PATH_HEADER = "x-pathname";
+
 const INTERNAL_RETURN_ORIGIN = "https://tacbookings.local";
 const MAX_RETURN_PATH_LENGTH = 2048;
 const CONTROL_CHARACTERS = /[\u0000-\u001F\u007F]/;

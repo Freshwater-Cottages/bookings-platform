@@ -21,6 +21,7 @@ import { copyStreetAddressToPostal } from "@/lib/member-address";
 import { checkNominatorEligibility } from "@/lib/nominator-eligibility";
 import { prisma } from "@/lib/prisma";
 import { getSeasonYear } from "@/lib/utils";
+import { MEMBER_LEVEL_ROLE_VALUES } from "@/lib/member-roles";
 import {
   findOrCreateXeroContact,
   isXeroConnected,
@@ -295,7 +296,7 @@ async function verifyNominator(email: string): Promise<VerifiedNominator> {
       email: normalizedEmail,
       active: true,
       canLogin: true,
-      role: { in: ["MEMBER", "ADMIN"] },
+      role: { in: [...MEMBER_LEVEL_ROLE_VALUES, "ADMIN"] },
     },
     select: {
       id: true,

@@ -13,6 +13,7 @@ import { checkRateLimit, type RateLimitConfig } from "@/lib/rate-limit";
 import { bulkCommunicationTemplate } from "@/lib/email-templates";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
+import { MEMBER_LEVEL_ROLE_VALUES } from "@/lib/member-roles";
 
 const DEFAULT_BULK_SENDMAIL_LIMIT = 1;
 
@@ -98,7 +99,7 @@ export async function POST(request: Request) {
   // Build recipient query
   const whereClause: Record<string, unknown> = { active: true };
   if (recipientFilter === "members-only") {
-    whereClause.role = { in: ["MEMBER", "ASSOCIATE", "LIFE"] };
+    whereClause.role = { in: [...MEMBER_LEVEL_ROLE_VALUES] };
   } else if (recipientFilter === "admins-only") {
     whereClause.role = "ADMIN";
   } else if (recipientFilter === "custom") {

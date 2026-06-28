@@ -10,6 +10,8 @@ import {
   getXeroContactGroupMemberships,
   getXeroContactIdsForGroup,
 } from "@/lib/xero";
+import { OPERATIONAL_ROLE_VALUES } from "@/lib/member-roles";
+import { roleNeverRequiresSubscription } from "@/lib/member-subscription-defaults";
 
 const subscriptionStatuses = [
   "PAID",
@@ -68,7 +70,7 @@ function isNotRequiredMember(
   member: { role: string; ageTier: string },
   notRequiredAgeTiers: Set<string>
 ) {
-  return member.role === "ADMIN" || notRequiredAgeTiers.has(member.ageTier);
+  return roleNeverRequiresSubscription(member.role) || notRequiredAgeTiers.has(member.ageTier);
 }
 
 function compareValues(left: string | number | Date | null, right: string | number | Date | null) {
@@ -176,7 +178,7 @@ export async function GET(request: NextRequest) {
     const notRequiredWhere: Prisma.MemberWhereInput = {
       ...memberWhere,
       OR: [
-        { role: "ADMIN" },
+        { role: { in: [...OPERATIONAL_ROLE_VALUES] } },
         ...(notRequiredAgeTiers.size > 0
           ? [{ ageTier: { in: Array.from(notRequiredAgeTiers) } }]
           : []),
