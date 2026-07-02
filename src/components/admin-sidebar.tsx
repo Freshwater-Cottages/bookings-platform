@@ -39,6 +39,7 @@ import {
   BedDouble,
   Hammer,
   FilePenLine,
+  PanelBottom,
   Palette,
   Images,
   UserPlus,
@@ -256,6 +257,11 @@ const navSections: NavSection[] = [
       },
       { href: "/admin/site-style", label: "Site Style", icon: Palette },
       { href: "/admin/page-content", label: "Page Content", icon: FilePenLine },
+      {
+        href: "/admin/site-content",
+        label: "Site Content",
+        icon: PanelBottom,
+      },
       {
         href: "/admin/mountain-conditions",
         label: "Mountain Conditions",

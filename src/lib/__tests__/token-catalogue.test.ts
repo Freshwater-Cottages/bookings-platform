@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
-vi.mock("@/config/club-identity", () => ({ CLUB_NAME: "Club <Name>" }));
+vi.mock("@/config/club-identity", () => ({
+  CLUB_NAME: "Club <Name>",
+  CLUB_FACEBOOK_URL: "https://facebook.com/test-club?ref=a&b",
+  CLUB_PUBLIC_URL: "https://alpine.example.nz",
+}));
 vi.mock("@/config/operational", () => ({ APP_CURRENCY: "NZD" }));
 vi.mock("@/lib/lodge-capacity", () => ({
   getLodgeCapacity: vi.fn(async () => 42),
@@ -52,6 +56,7 @@ describe("token catalogue contents", () => {
       "club-name",
       "currency",
       "lodge-capacity",
+      "facebook-url",
     ]);
   });
 
@@ -85,9 +90,23 @@ describe("token catalogue contents", () => {
     ]);
   });
 
-  it("lists every catalogue token in the page-content-body context", () => {
-    expect(tokensForContext("page-content-body")).toHaveLength(
-      HTML_TOKEN_CATALOGUE.length,
+  it("limits the site-footer context to text tokens", () => {
+    const footerTokens = tokensForContext("site-footer");
+    expect(footerTokens.length).toBeGreaterThan(0);
+    expect(footerTokens.every((token) => token.kind === "text")).toBe(true);
+    expect(footerTokens.map((token) => token.token)).toEqual([
+      "club-name",
+      "currency",
+      "lodge-capacity",
+      "facebook-url",
+    ]);
+  });
+
+  it("lists every catalogue token except facebook-url in the page-content-body context", () => {
+    expect(tokensForContext("page-content-body").map((t) => t.token)).toEqual(
+      HTML_TOKEN_CATALOGUE.filter(
+        (definition) => definition.token !== "facebook-url",
+      ).map((definition) => definition.token),
     );
   });
 });
@@ -186,6 +205,19 @@ describe("buildEmbeddedBody with derived regexes", () => {
     );
     expect(parts).toEqual([
       { type: "html", value: "<p>Club &lt;Name&gt; sleeps 42.</p>" },
+    ]);
+  });
+
+  it("resolves facebook-url with an attribute-safe escaped value", async () => {
+    const parts = await buildEmbeddedBody(
+      '<p><a href="{{facebook-url}}">Facebook</a></p>',
+    );
+    expect(parts).toEqual([
+      {
+        type: "html",
+        value:
+          '<p><a href="https://facebook.com/test-club?ref=a&amp;b">Facebook</a></p>',
+      },
     ]);
   });
 });

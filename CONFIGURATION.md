@@ -158,6 +158,27 @@ menu.
   intentionally rejected there because filesystem uploads are served as static
   image assets without the database image route's restrictive CSP.
 
+## Website Site Content
+
+Shared public website chrome is database-backed (`SiteContent`) and edited in
+Admin > Site Content. This is separate from `PageContent`: page records still
+own per-page header/body content and menu entries, while site content owns
+reusable layout fragments that are not routable pages.
+
+- The first site-content sections are the three public footer columns:
+  `FOOTER_BLURB`, `FOOTER_QUICK_LINKS`, and `FOOTER_AFFILIATIONS`.
+- The public footer keeps the logo, current year, copyright line, and
+  privacy/terms links code-managed. Admins can edit or clear the three column
+  HTML fragments; clearing either link column hides that column.
+- The migration backfills starter footer rows with the previous hardcoded
+  footer copy, so deploy-only environments keep the same footer without
+  running the seed. The seed also creates the starter rows when missing and
+  never overwrites existing admin edits.
+- Footer section HTML is sanitised on save and again on render with the same
+  allowlist as page content (`src/lib/page-content-html.ts`). Footer text
+  tokens include `{{club-name}}`, `{{currency}}`, `{{lodge-capacity}}`, and
+  `{{facebook-url}}`; embed tokens are not supported in footer sections.
+
 ## Lodge Instructions
 
 Lodge opening, closing, and day-to-day instructions for hut leaders are

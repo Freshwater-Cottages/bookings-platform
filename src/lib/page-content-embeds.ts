@@ -7,7 +7,11 @@ import {
   imagePublicUrl,
   resolveInImagesRoot,
 } from "@/lib/image-storage";
-import { CLUB_NAME } from "@/config/club-identity";
+import {
+  CLUB_FACEBOOK_URL,
+  CLUB_NAME,
+  CLUB_PUBLIC_URL,
+} from "@/config/club-identity";
 import { APP_CURRENCY } from "@/config/operational";
 import { getLodgeCapacity } from "@/lib/lodge-capacity";
 import { extractImageDimensions } from "@/lib/media-image";
@@ -95,6 +99,10 @@ export async function resolveTextTokens(contentHtml: string): Promise<string> {
         return escapeHtmlText(CLUB_NAME);
       case "currency":
         return escapeHtmlText(APP_CURRENCY);
+      case "facebook-url":
+        // Escaped like every other replacement, so the value stays safe both
+        // as visible text and inside a sanitised href attribute.
+        return escapeHtmlText(CLUB_FACEBOOK_URL ?? CLUB_PUBLIC_URL);
       default:
         return "";
     }

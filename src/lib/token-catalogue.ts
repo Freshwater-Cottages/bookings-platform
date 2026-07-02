@@ -6,7 +6,10 @@
 // client components import this directly.
 
 /** Editor surfaces a token can be used in. */
-export type TokenContextId = "page-content-body" | "lodge-instructions";
+export type TokenContextId =
+  | "page-content-body"
+  | "lodge-instructions"
+  | "site-footer";
 
 export type HtmlTokenDefinition = {
   /** Canonical lower-case token name, without braces. */
@@ -134,7 +137,7 @@ export const HTML_TOKEN_CATALOGUE: readonly HtmlTokenDefinition[] = [
       "Replaced with the current club name when the content renders.",
     example: "{{club-name}}",
     allowsLegacySingleBrace: false,
-    contexts: ["page-content-body", "lodge-instructions"],
+    contexts: ["page-content-body", "lodge-instructions", "site-footer"],
   },
   {
     token: "currency",
@@ -143,7 +146,7 @@ export const HTML_TOKEN_CATALOGUE: readonly HtmlTokenDefinition[] = [
       "Replaced with the current currency code when the content renders.",
     example: "{{currency}}",
     allowsLegacySingleBrace: false,
-    contexts: ["page-content-body", "lodge-instructions"],
+    contexts: ["page-content-body", "lodge-instructions", "site-footer"],
   },
   {
     token: "lodge-capacity",
@@ -152,7 +155,19 @@ export const HTML_TOKEN_CATALOGUE: readonly HtmlTokenDefinition[] = [
       "Replaced with the current lodge capacity when the content renders.",
     example: "{{lodge-capacity}}",
     allowsLegacySingleBrace: false,
-    contexts: ["page-content-body", "lodge-instructions"],
+    contexts: ["page-content-body", "lodge-instructions", "site-footer"],
+  },
+  {
+    token: "facebook-url",
+    kind: "text",
+    description:
+      "Replaced with the club's Facebook URL from the club configuration " +
+      "(falling back to the public website URL when no Facebook link is " +
+      "configured). Use it as a link address so the link follows the " +
+      "configuration.",
+    example: "{{facebook-url}}",
+    allowsLegacySingleBrace: false,
+    contexts: ["site-footer"],
   },
 ];
 
