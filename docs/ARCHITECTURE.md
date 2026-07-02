@@ -305,7 +305,11 @@ member-import `role` column. The shared helpers are `isFullAdmin` and
 `accessRoleChangeRequiresFullAdmin` in `src/lib/access-roles.ts`; the member
 editor, create, bulk-update, and import paths all apply them and return 403
 for a non-Full-Admin actor. `requireAdmin()` returns DB-verified access roles
-on the session user so these checks never trust a stale JWT claim.
+on the session user so these checks never trust a stale JWT claim. The same
+boundary covers the login email: only a Full Admin may change the email of
+another member who holds a privileged access role, because an email change
+plus a forgot-password request would hand the account and its roles to the
+new address (`hasPrivilegedAccess` in `src/lib/access-roles.ts`).
 
 Seasonal membership types are policy records, not access roles. `MembershipType`
 stores the stable identifier, display text, active/archive state, sort order,

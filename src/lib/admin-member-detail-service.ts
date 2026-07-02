@@ -51,6 +51,7 @@ import {
   accessRoleChangeRequiresFullAdmin,
   accessRolesFromCompatibilityFields,
   financeAccessLevelFromAccessRoles,
+  hasPrivilegedAccess,
   isFullAdmin,
   legacyRoleFromAccessRoles,
   normalizeAssignableAccessRoles,
@@ -692,6 +693,27 @@ export async function updateAdminMember(params: {
           : "Cancelled members cannot be reactivated from member edit",
       },
       { status: 409 },
+    );
+  }
+
+  // Full Admin gate on privileged-member email changes (issue #1026): a
+  // scoped admin must not edit the login email of a member who holds a
+  // privileged access role — an email change plus a public forgot-password
+  // request hands the account (and its roles) to the new address. Editing
+  // your own email stays allowed: it grants nothing you do not already
+  // have. Uses effective (canLogin-aware) roles, so contact upkeep on
+  // archived/cancelled ex-admins is unaffected; activating such an account
+  // is already Full-Admin-only via the #1012 role gate.
+  if (
+    data.email !== undefined &&
+    data.email.toLowerCase().trim() !== existing.email &&
+    id !== currentAdminMemberId &&
+    !isFullAdmin({ accessRoles: currentAdminAccessRoles }) &&
+    hasPrivilegedAccess(existing)
+  ) {
+    return jsonResult(
+      { error: "Only a Full Admin can change a privileged member's email" },
+      { status: 403 },
     );
   }
 
