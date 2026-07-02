@@ -309,7 +309,11 @@ on the session user so these checks never trust a stale JWT claim. A
 submission that changes no role field — such as the member editor echoing a
 member's unchanged roles back on a contact-only edit — is not a role write:
 it neither requires Full Admin nor rewrites a dormant privileged legacy role
-still stored on a non-login (archived or cancelled) member.
+still stored on a non-login (archived or cancelled) member. The same
+boundary covers the login email: only a Full Admin may change the email of
+another member who holds a privileged access role, because an email change
+plus a forgot-password request would hand the account and its roles to the
+new address (`hasPrivilegedAccess` in `src/lib/access-roles.ts`).
 
 Seasonal membership types are policy records, not access roles. `MembershipType`
 stores the stable identifier, display text, active/archive state, sort order,

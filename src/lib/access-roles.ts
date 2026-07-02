@@ -182,6 +182,17 @@ function isPrivilegedAccessRole(role: string) {
 }
 
 /**
+ * True when the member currently holds any privileged access role (issue
+ * #1026): identity/credential-relevant edits (the login email) of such an
+ * account are Full-Admin-only, because an email change plus a
+ * forgot-password request hands the account and its roles to the new
+ * address.
+ */
+export function hasPrivilegedAccess(input: AccessRoleInput) {
+  return resolveAccessRoles(input).some(isPrivilegedAccessRole);
+}
+
+/**
  * True when moving a member from `before` to `after` grants or revokes any
  * privileged access role, which only a Full Admin may do (issue #1012).
  * Submitting an unchanged role set never trips this.

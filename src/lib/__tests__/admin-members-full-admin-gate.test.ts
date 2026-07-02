@@ -539,3 +539,113 @@ describe("issue #1012 — Full Admin gate on access-role writes", () => {
     });
   });
 });
+
+// Issue #1026: the #1012 gate covers only role-field writes, so a scoped
+// admin could change a privileged account's EMAIL, then capture a public
+// forgot-password reset at the new address and log in with the victim's
+// roles. Email changes on members holding privileged effective roles must be
+// Full-Admin-only; self-edits and ordinary members stay unaffected.
+describe("issue #1026 — Full Admin gate on privileged-member email changes", () => {
+  const fullAdminTarget = {
+    ...targetMember,
+    role: "ADMIN",
+    accessRoles: [{ role: "ADMIN" }],
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(prisma.memberFieldsSettings.findUnique).mockResolvedValue(null);
+    vi.mocked(prisma.member.findUnique).mockResolvedValue(
+      fullAdminTarget as any,
+    );
+    mockUpdateTransaction();
+  });
+
+  it("returns 403 when a scoped admin changes a Full Admin's email", async () => {
+    mockRequireAdmin.mockResolvedValue(scopedAdminGuard);
+    const res = await putMember("m1", { email: "attacker@evil.com" });
+    expect(res.status).toBe(403);
+    expect((await res.json()).error).toMatch(/Full Admin/);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("returns 403 when a scoped admin changes a peer scoped admin's email", async () => {
+    mockRequireAdmin.mockResolvedValue(scopedAdminGuard);
+    vi.mocked(prisma.member.findUnique).mockResolvedValue({
+      ...targetMember,
+      accessRoles: [{ role: "ADMIN_MEMBERSHIP" }],
+    } as any);
+    const res = await putMember("m1", { email: "attacker@evil.com" });
+    expect(res.status).toBe(403);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("allows a scoped admin to edit a Full Admin's contact details when the echoed email is unchanged", async () => {
+    mockRequireAdmin.mockResolvedValue(scopedAdminGuard);
+    vi.mocked(prisma.member.update).mockResolvedValue(fullAdminTarget as any);
+    const res = await putMember("m1", {
+      email: targetMember.email,
+      firstName: "Robin",
+    });
+    expect(res.status).toBe(200);
+  });
+
+  it("allows a scoped admin to change an ordinary member's email", async () => {
+    mockRequireAdmin.mockResolvedValue(scopedAdminGuard);
+    vi.mocked(prisma.member.findUnique).mockResolvedValue(
+      targetMember as any,
+    );
+    vi.mocked(prisma.member.findFirst).mockResolvedValue(null);
+    vi.mocked(prisma.member.update).mockResolvedValue({
+      ...targetMember,
+      email: "new@example.com",
+    } as any);
+    const res = await putMember("m1", { email: "new@example.com" });
+    expect(res.status).toBe(200);
+  });
+
+  it("allows a scoped admin to change their own email", async () => {
+    mockRequireAdmin.mockResolvedValue(scopedAdminGuard);
+    const self = {
+      ...targetMember,
+      id: "actor1",
+      accessRoles: [{ role: "ADMIN_MEMBERSHIP" }],
+    };
+    vi.mocked(prisma.member.findUnique).mockResolvedValue(self as any);
+    vi.mocked(prisma.member.findFirst).mockResolvedValue(null);
+    vi.mocked(prisma.member.update).mockResolvedValue({
+      ...self,
+      email: "me@example.com",
+    } as any);
+    const res = await putMember("actor1", { email: "me@example.com" });
+    expect(res.status).toBe(200);
+  });
+
+  it("allows a scoped admin to change the email of a non-login member with a dormant legacy role", async () => {
+    mockRequireAdmin.mockResolvedValue(scopedAdminGuard);
+    const dormant = {
+      ...targetMember,
+      role: "ADMIN",
+      canLogin: false,
+      accessRoles: [],
+    };
+    vi.mocked(prisma.member.findUnique).mockResolvedValue(dormant as any);
+    vi.mocked(prisma.member.update).mockResolvedValue({
+      ...dormant,
+      email: "archive@example.com",
+    } as any);
+    const res = await putMember("m1", { email: "archive@example.com" });
+    expect(res.status).toBe(200);
+  });
+
+  it("allows a Full Admin to change another Full Admin's email", async () => {
+    mockRequireAdmin.mockResolvedValue(fullAdminGuard);
+    vi.mocked(prisma.member.findFirst).mockResolvedValue(null);
+    vi.mocked(prisma.member.update).mockResolvedValue({
+      ...fullAdminTarget,
+      email: "renamed@example.com",
+    } as any);
+    const res = await putMember("m1", { email: "renamed@example.com" });
+    expect(res.status).toBe(200);
+  });
+});
