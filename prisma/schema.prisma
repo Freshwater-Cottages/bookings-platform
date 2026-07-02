@@ -2659,6 +2659,32 @@ model LodgeInstruction {
 }
 
 // ---------------------------------------------------------------------------
+// Site Content (issue #993)
+//
+// Admin-editable HTML fragments for site chrome that is not a page of its
+// own (currently the three public footer columns). Deliberately separate
+// from PageContent: these fragments never appear in the website menu or the
+// dynamic public page route. Future chrome sections are one enum value away.
+// ---------------------------------------------------------------------------
+
+enum SiteContentKey {
+  FOOTER_BLURB
+  FOOTER_QUICK_LINKS
+  FOOTER_AFFILIATIONS
+}
+
+model SiteContent {
+  id                String         @id @default(cuid())
+  key               SiteContentKey @unique
+  contentHtml       String
+  updatedByMemberId String?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  @@index([updatedByMemberId])
+}
+
+// ---------------------------------------------------------------------------
 // Guest Chore Token (F10)
 // ---------------------------------------------------------------------------
 

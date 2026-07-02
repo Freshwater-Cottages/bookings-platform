@@ -157,6 +157,9 @@ The source of truth is `prisma/schema.prisma`. Key domains are:
   connection rather than a separate finance token store.
 - Cron run records, email logs, webhook logs, processed webhook events, and
   backup/audit-retention support records.
+- Public website content records: `PageContent` owns routable page
+  header/body/menu content, while `SiteContent` owns shared public chrome such
+  as the editable footer columns that never appear in the website menu.
 
 ## Booking and Payment Flow
 
