@@ -815,7 +815,13 @@ export default function BookPage() {
           );
         }
       }
-      router.push(`/bookings/${data.id}`);
+      // Land on the payment card when payment is the next step; the hash is a
+      // harmless no-op when the card isn't rendered (holds, review, zero due).
+      router.push(
+        showPaymentMethodChoice
+          ? `/bookings/${data.id}#payment`
+          : `/bookings/${data.id}`,
+      );
     } else {
       const data = await res.json();
       if (data.code === "CAPACITY_EXCEEDED" && data.canWaitlist) {
@@ -1084,7 +1090,15 @@ export default function BookPage() {
 
   return (
     <div className="max-w-3xl space-y-6">
-      <h1 className="text-3xl font-bold">Book a Stay</h1>
+      <div className="space-y-1">
+        <Link
+          href="/dashboard"
+          className="text-sm text-muted-foreground hover:text-foreground"
+        >
+          &larr; Back to Dashboard
+        </Link>
+        <h1 className="text-3xl font-bold">Book a Stay</h1>
+      </div>
 
       {/* Subscription warning banner */}
       {!subscriptionLoading && subscriptionUnpaid && (
@@ -1295,6 +1309,10 @@ export default function BookPage() {
         <span className="text-gray-300">&rarr;</span>
         <span className={step === "review" ? "app-step-active" : "text-gray-400"}>
           3. Review & Confirm
+        </span>
+        <span className="text-gray-300">&rarr;</span>
+        <span className="text-gray-400">
+          {requiresAdminReviewLocal ? "4. Admin Review" : "4. Pay"}
         </span>
       </div>
 
@@ -1893,7 +1911,13 @@ export default function BookPage() {
                 {savingDraft ? "Saving draft..." : "Save as Draft"}
               </Button>
               <Button onClick={handleSubmit} disabled={submitting || savingDraft} size="lg">
-                {submitting ? "Creating booking..." : "Confirm Booking"}
+                {submitting
+                  ? "Creating booking..."
+                  : requiresAdminReviewLocal
+                    ? "Submit for Review"
+                    : remainingToPay > 0
+                      ? "Continue to Payment"
+                      : "Confirm Booking"}
               </Button>
             </div>
           </div>
