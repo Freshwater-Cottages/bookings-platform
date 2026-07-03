@@ -62,6 +62,9 @@ prepare() {
   compose exec -T postgres psql -U tac -d tacbookings -v ON_ERROR_STOP=1 \
     -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
 
+  echo "==> Generating Prisma client"
+  DATABASE_URL="$HOST_DATABASE_URL" npx prisma generate
+
   echo "==> Applying migrations"
   DATABASE_URL="$HOST_DATABASE_URL" npx prisma migrate deploy
 
