@@ -397,6 +397,11 @@ export async function listAdminMembers(
     });
   } else if (isRole(roleFilter)) {
     andConditions.push({ role: roleFilter });
+  } else if (roleFilter) {
+    // Custom definition-backed role token (definition id).
+    andConditions.push({
+      accessRoles: { some: { roleDefinitionId: roleFilter } },
+    });
   }
 
   if (

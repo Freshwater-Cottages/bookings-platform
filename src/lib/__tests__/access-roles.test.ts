@@ -4,8 +4,13 @@ import {
   authorizationRoleFromAccessRoles,
   financeAccessLevelFromAccessRoles,
   legacyRoleFromAccessRoles,
+  hasPrivilegedAccess,
   normalizeAssignableAccessRoles,
+  normalizeAssignableAccessRoleTokens,
   resolveAccessRoles,
+  resolveAccessRoleTokens,
+  storedAccessRolesForFullAdminGate,
+  accessRoleChangeRequiresFullAdmin,
 } from "@/lib/access-roles";
 
 describe("access role compatibility helpers", () => {
@@ -87,6 +92,77 @@ describe("access role compatibility helpers", () => {
       normalizeAssignableAccessRoles(["USER", "FINANCE_ADMIN"], {
         canLogin: false,
       }),
+    ).toEqual([]);
+  });
+});
+
+describe("definition-backed role tokens", () => {
+  const customRow = {
+    role: null,
+    roleDefinitionId: "ardef_custom",
+  };
+
+  it("keeps custom-role rows as definition-id tokens", () => {
+    expect(
+      resolveAccessRoleTokens({
+        accessRoles: [{ role: "USER" }, customRow],
+        canLogin: true,
+      }),
+    ).toEqual(["USER", "ardef_custom"]);
+    expect(
+      resolveAccessRoleTokens({
+        accessRoles: [{ role: "USER" }, customRow],
+        canLogin: false,
+      }),
+    ).toEqual([]);
+  });
+
+  it("counts members holding only a custom role as privileged", () => {
+    expect(
+      hasPrivilegedAccess({ accessRoles: [customRow], canLogin: true }),
+    ).toBe(true);
+    expect(
+      hasPrivilegedAccess({
+        accessRoles: [{ role: "USER" }],
+        canLogin: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("includes definition tokens in the stored-role Full Admin gate", () => {
+    expect(
+      storedAccessRolesForFullAdminGate({
+        accessRoles: [customRow],
+        role: "USER",
+        financeAccessLevel: "NONE",
+      }),
+    ).toContain("ardef_custom");
+  });
+
+  it("requires Full Admin to grant or revoke a custom role", () => {
+    expect(accessRoleChangeRequiresFullAdmin(["USER"], ["USER", "ardef_custom"])).toBe(
+      true,
+    );
+    expect(
+      accessRoleChangeRequiresFullAdmin(
+        ["USER", "ardef_custom"],
+        ["USER", "ardef_custom"],
+      ),
+    ).toBe(false);
+    expect(accessRoleChangeRequiresFullAdmin(["USER"], ["USER", "ORG"])).toBe(
+      false,
+    );
+  });
+
+  it("normalizes token lists with the legacy finance rule and canLogin clearing", () => {
+    expect(
+      normalizeAssignableAccessRoleTokens(
+        ["FINANCE_USER", "FINANCE_ADMIN", "ardef_custom", "ardef_custom"],
+        { canLogin: true },
+      ),
+    ).toEqual(["FINANCE_ADMIN", "ardef_custom"]);
+    expect(
+      normalizeAssignableAccessRoleTokens(["ADMIN"], { canLogin: false }),
     ).toEqual([]);
   });
 });

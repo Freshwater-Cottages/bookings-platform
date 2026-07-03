@@ -335,6 +335,38 @@ export function buildAccessRoleOptions(
 }
 
 /**
+ * Static options from the legacy constants and bundles, used by client
+ * components as a placeholder until the database-backed options load.
+ * Toggling submits enum tokens, which stay valid regardless.
+ */
+export function buildFallbackAccessRoleOptions(): AccessRoleOption[] {
+  return [
+    ...SYSTEM_ROLE_ORDER_HEAD.map(systemRoleOption),
+    ...DEFAULT_ACCESS_ROLE_DEFINITIONS.map((definition) => ({
+      token: definition.systemRole,
+      label: definition.label,
+      description: definition.description,
+      permissions: matrixFromAccessRoleDefinition(definition),
+      privileged: true,
+      system: false,
+      definitionId: null,
+    })),
+    ...SYSTEM_ROLE_ORDER_TAIL.map(systemRoleOption),
+  ];
+}
+
+/** Display label for a role token: option label, enum label, or the token. */
+export function accessRoleLabelForToken(
+  token: string,
+  options?: ReadonlyArray<AccessRoleOption>,
+): string {
+  const option = options?.find((candidate) => candidate.token === token);
+  if (option) return option.label;
+  if (isAccessRole(token)) return ACCESS_ROLE_LABELS[token];
+  return token;
+}
+
+/**
  * Merged preview matrix for a set of selected option tokens — pure, so the
  * client-side picker can show live previews without database access.
  */
