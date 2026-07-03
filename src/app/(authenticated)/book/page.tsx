@@ -36,6 +36,9 @@ import {
 } from "@/lib/family-booking";
 import { buildProfilePathWithReturnTo } from "@/lib/internal-return-path";
 import { hasAdminAccess } from "@/lib/access-roles";
+import { isPaymentOwedBookingStatus } from "@/lib/booking-status";
+import { getBookingPaymentMode } from "@/lib/booking-payment-flow";
+import BookingPaymentWrapper from "@/components/stripe/BookingPaymentWrapper";
 
 interface FamilyMember {
   id: string;
@@ -169,7 +172,16 @@ export default function BookPage() {
   const router = useRouter();
   const { data: session } = useSession();
   const { lodgeCapacity } = useClubIdentity();
-  const [step, setStep] = useState<"dates" | "guests" | "review">("dates");
+  const [step, setStep] = useState<"dates" | "guests" | "review" | "pay">(
+    "dates",
+  );
+  // Set when the booking is created on the card-payment path; drives step 4.
+  const [createdBooking, setCreatedBooking] = useState<{
+    id: string;
+    status: string;
+    amountCents: number;
+    returnUrl: string;
+  } | null>(null);
   const [checkIn, setCheckIn] = useState<Date | null>(null);
   const [checkOut, setCheckOut] = useState<Date | null>(null);
   const [guests, setGuests] = useState<GuestData[]>([]);
@@ -815,6 +827,25 @@ export default function BookPage() {
           );
         }
       }
+      // Card path: stay in the wizard and take payment as step 4 (#1084).
+      // Everything else keeps the existing redirects: internet banking gets
+      // its invoice instructions, holds/review/zero-due have nothing to pay.
+      if (
+        showPaymentMethodChoice &&
+        paymentMethod === "stripe" &&
+        isPaymentOwedBookingStatus(data.status)
+      ) {
+        setCreatedBooking({
+          id: data.id,
+          status: data.status,
+          amountCents: remainingToPay,
+          returnUrl: `${window.location.origin}/bookings/${data.id}`,
+        });
+        setStep("pay");
+        setSubmitting(false);
+        window.scrollTo({ top: 0 });
+        return;
+      }
       // Land on the payment card when payment is the next step; the hash is a
       // harmless no-op when the card isn't rendered (holds, review, zero due).
       router.push(
@@ -1311,7 +1342,7 @@ export default function BookPage() {
           3. Review & Confirm
         </span>
         <span className="text-gray-300">&rarr;</span>
-        <span className="text-gray-400">
+        <span className={step === "pay" ? "app-step-active" : "text-gray-400"}>
           {requiresAdminReviewLocal ? "4. Admin Review" : "4. Pay"}
         </span>
       </div>
@@ -1922,6 +1953,40 @@ export default function BookPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Step 4: Pay (card path only; #1084). The booking already exists in
+          the same state as the old redirect flow, so abandoning this step is
+          safe — the booking page's payment card and banner take over. */}
+      {step === "pay" && createdBooking && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Complete Payment</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <p className="text-sm text-gray-600">
+              Your booking is created. Complete payment to finish securing it.
+            </p>
+            <BookingPaymentWrapper
+              bookingId={createdBooking.id}
+              amountCents={createdBooking.amountCents}
+              paymentMode={getBookingPaymentMode(createdBooking.status)}
+              returnUrl={createdBooking.returnUrl}
+              onPaymentComplete={() =>
+                router.push(`/bookings/${createdBooking.id}`)
+              }
+            />
+            <p className="text-sm text-gray-600">
+              <Link
+                href={`/bookings/${createdBooking.id}`}
+                className="underline"
+              >
+                View booking details
+              </Link>{" "}
+              &mdash; you can also pay later from your booking page.
+            </p>
+          </CardContent>
+        </Card>
       )}
     </div>
   );
