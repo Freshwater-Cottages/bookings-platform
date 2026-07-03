@@ -31,10 +31,7 @@ vi.mock("@/lib/logger", () => ({
   },
 }));
 
-import {
-  GeneralCronCycleError,
-  runGeneralCronCycle,
-} from "@/lib/general-cron-runner";
+import { runGeneralCronCycle } from "@/lib/general-cron-runner";
 
 describe("general cron runner", () => {
   it("records every job in the shared general cron cycle", async () => {
@@ -53,6 +50,8 @@ describe("general cron runner", () => {
           scanned: 1,
           reaped: 1,
           releasedChildBookings: 2,
+          expiredSettlements: 0,
+          cancelledChildBookings: 0,
         })),
         sendPreArrivalReminders: vi.fn(async () => ({
           reminderDays: 3,
@@ -87,6 +86,8 @@ describe("general cron runner", () => {
       scanned: 1,
       reaped: 1,
       releasedChildBookings: 2,
+      expiredSettlements: 0,
+      cancelledChildBookings: 0,
     });
     expect(recordCronRun).toHaveBeenCalledTimes(5);
     expect(recordCronRun).toHaveBeenCalledWith(
@@ -143,6 +144,8 @@ describe("general cron runner", () => {
       scanned: 0,
       reaped: 0,
       releasedChildBookings: 0,
+      expiredSettlements: 0,
+      cancelledChildBookings: 0,
     }));
 
     await expect(
@@ -159,7 +162,7 @@ describe("general cron runner", () => {
           sendQuoteExpiryReminders,
         },
       })
-    ).rejects.toMatchObject<Partial<GeneralCronCycleError>>({
+    ).rejects.toMatchObject({
       failures: [
         { jobName: "confirm-pending", message: "database unavailable" },
       ],
