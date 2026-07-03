@@ -125,6 +125,12 @@ recovery visibility. `src/lib/stuck-state-dashboard.ts` aggregates local
 payment recovery, operational Xero, email deliverability, waitlist,
 bed-allocation, hut-leader, and issue-report signals into severity, owner, and
 target links without making live provider calls during page render.
+`src/lib/booking-provider-mismatches.ts` answers the same provider-divergence
+questions for a single booking (paid with no completed Xero invoice operation,
+Stripe refund with no Xero credit note, waitlist offer whose email needs
+operator action) and feeds the amber "Provider state out of step" block on the
+booking detail Admin tools card — read-only detection mirroring the
+stuck-state queries.
 
 The `/admin/xero` and `/admin/members` routes are route shells with local
 `_components` and `_hooks` folders. Shared admin/member logic lives in
