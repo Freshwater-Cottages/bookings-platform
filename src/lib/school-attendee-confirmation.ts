@@ -191,17 +191,7 @@ async function findRequestByToken(token: string) {
     include: {
       convertedBooking: {
         include: {
-          guests: {
-            select: {
-              id: true,
-              firstName: true,
-              lastName: true,
-              ageTier: true,
-              isMember: true,
-              memberId: true,
-            },
-            orderBy: { createdAt: "asc" },
-          },
+          guests: { orderBy: { createdAt: "asc" } },
           payment: true,
         },
       },
