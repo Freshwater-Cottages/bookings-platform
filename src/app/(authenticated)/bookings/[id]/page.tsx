@@ -44,6 +44,7 @@ import {
 import { isBookingFullyPaidForGuestNameEdits } from "@/lib/booking-modify";
 import { isPaymentOwedBookingStatus } from "@/lib/booking-status";
 import { isBookingBedAllocationLocked } from "@/lib/admin-bed-allocation";
+import { getBookingProviderMismatches } from "@/lib/booking-provider-mismatches";
 import { loadEmailMessageSettings } from "@/lib/email-message-settings";
 import { loadPublicBookingMessages } from "@/lib/booking-message-settings";
 import { renderBookingMessageTemplate } from "@/lib/booking-message-definitions";
@@ -596,6 +597,10 @@ export default async function BookingDetailPage({
     isBookingOwner &&
     (Boolean(organiserGroupState) || canOpenGroup);
 
+  const providerMismatches = isAdmin
+    ? await getBookingProviderMismatches(booking.id)
+    : [];
+
   return (
     <div className="max-w-2xl space-y-6">
       <ScrollToHash />
@@ -632,6 +637,7 @@ export default async function BookingDetailPage({
             booking.payment?.stripePaymentMethodId &&
               booking.payment?.stripeCustomerId,
           )}
+          providerMismatches={providerMismatches}
         />
       )}
 
