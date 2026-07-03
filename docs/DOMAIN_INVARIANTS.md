@@ -87,6 +87,21 @@ Booking changes must not orphan or desynchronize:
 Positive deltas, negative deltas, credits, refunds, and additional payments must
 remain traceable to the original booking and modification event.
 
+Per-guest stay ranges must sit inside the parent booking's checkIn/checkOut
+envelope. A guest stay range outside the current envelope is not rejected —
+it auto-expands the booking's dates (issue #713). The database enforces the
+envelope as a safety net with deferred constraint triggers
+(`BookingGuest_stay_range_within_booking`,
+`Booking_dates_consistent_with_guests`) that validate at COMMIT, so a
+transaction may widen guest rows before the parent booking row; only the
+committed state must satisfy the invariant. The modification services call
+`assertBookingEnvelopeInvariants` (`SET CONSTRAINTS … IMMEDIATE`) as the last
+statement of their transactions so a violation is attributed to the calling
+service rather than surfacing as an anonymous commit failure; the modify
+routes recognise the constraint errors via
+`isBookingEnvelopeInvariantViolation` and return a clean 500 instead of
+leaking raw trigger text to the client.
+
 Nightly prices lock at booking time: every edit path — batch modify, date
 change, guest add, single-guest removal, and the modify-quote preview — prices
 only the changed guests/nights at current season rates. A night a guest
