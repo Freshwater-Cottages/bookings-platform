@@ -191,6 +191,7 @@ const baseMember: Member = {
   postalPostalCode: null,
   postalCountry: null,
   familyGroups: [],
+  currentMembershipType: null,
 };
 
 function renderMemberTable(members: Member[]) {
@@ -290,7 +291,7 @@ describe("admin member access-role UI", () => {
         activeFilterCount={1}
         xeroFeatures={{
           liveMemberGroupLookups: false,
-          autoLoadXeroContactGroups: false,
+          autoLoadContactGroups: false,
         }}
         xeroContactGroupsList={[]}
         onSearchChange={vi.fn()}

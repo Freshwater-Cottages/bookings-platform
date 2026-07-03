@@ -130,6 +130,7 @@ vi.mock("@/lib/payment-transactions", () => ({
     mockUpsertPaymentIntentTransaction(...args),
 }));
 vi.mock("@/lib/payment-recovery", () => ({
+  enqueueAdditionalPaymentIntentRecovery: vi.fn().mockResolvedValue({ id: "recovery_additional" }),
   completeCanceledSupersededPaymentIntentRecovery: (...args: unknown[]) =>
     mockCompleteCanceledSupersededPaymentIntentRecovery(...args),
   queueSupersededPaymentIntentRefundRecovery: (...args: unknown[]) =>
@@ -312,6 +313,25 @@ describe("Stripe webhook Xero alerting", () => {
       error: "Invalid content-length header",
     });
     expect(mockConstructWebhookEvent).not.toHaveBeenCalled();
+  });
+
+  it("rejects a present-but-invalid Stripe signature without processing the event", async () => {
+    // Wrong-signature row of the webhook Critical matrix (issue #1133): the
+    // header is present but verification fails, so nothing may be processed
+    // and no idempotency claim may be written.
+    mockConstructWebhookEvent.mockImplementation(() => {
+      throw new Error(
+        "No signatures found matching the expected signature for payload"
+      );
+    });
+
+    const response = await POST(makeRequest());
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: "Webhook signature verification failed",
+    });
+    expect(mockProcessedWebhookCreate).not.toHaveBeenCalled();
   });
 
   it("uses the deduplicated notifier when invoice creation fails after payment success", async () => {

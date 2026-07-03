@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   PaymentSource,
-  PaymentStatus,
-  PaymentTransactionKind,
   type AgeTier,
   type BookingGuest,
 } from "@prisma/client";
@@ -19,6 +17,7 @@ import {
   MembershipTypeBookingPolicyError,
   priceBookingGuestsWithMembershipTypePolicy,
 } from "@/lib/membership-type-policy";
+import { toGroupDiscountConfig } from "@/lib/policies/booking-route-decisions";
 import {
   deletePromoRedemptionAndAdjustCount,
   replacePromoRedemptionAllocations,
@@ -27,7 +26,7 @@ import {
 import { logAudit } from "@/lib/audit";
 import { sendBookingModifiedEmail } from "@/lib/email";
 import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settlement";
-import { createPaymentIntent, findOrCreateCustomer } from "@/lib/stripe";
+import { createModificationAdditionalPaymentIntent } from "@/lib/booking-modification-settlement";
 import logger from "@/lib/logger";
 import { z } from "zod";
 import { ageTierEnum } from "@/lib/age-tier-schema";
@@ -46,7 +45,6 @@ import {
   ADULT_SUPERVISION_REVIEW_REASON,
   requiresAdultSupervisionReview,
 } from "@/lib/booking-review";
-import { upsertPaymentIntentTransaction } from "@/lib/payment-transactions";
 import { nameField } from "@/lib/zod-helpers";
 import { getBookingEditPolicy } from "@/lib/booking-edit-policy";
 import {
@@ -54,7 +52,6 @@ import {
   lockedNightPricesForGuest,
 } from "@/lib/booking-modify";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
-import { queueSupersededAdditionalIntentCancellations } from "@/lib/booking-payment-cleanup";
 import { getSeasonYear } from "@/lib/utils";
 import {
   authorizationRoleFromAccessRoles,
@@ -352,57 +349,12 @@ export async function POST(
         memberId: g.memberId ?? null,
       }));
 
-      let newGuestPrice;
-      try {
-        newGuestPrice = await priceBookingGuestsWithMembershipTypePolicy(tx, {
-          ownerMemberId: booking.memberId,
-          checkIn: booking.checkIn,
-          checkOut: booking.checkOut,
-          guests: newGuestInputs,
-          seasons: seasonRateData,
-          seasonYear,
-        });
-      } catch (error) {
-        if (error instanceof MembershipTypeBookingPolicyError) {
-          throw error;
-        }
-        throw new ApiError(
-          "No season rate found for the booking dates",
-          400
-        );
-      }
-
-      // Create BookingGuest records, persisting one BookingGuestNight row per
-      // priced night (#1093) so added guests join the uniform night-row model:
-      // without rows, a later edit would reprice their whole stay at current
-      // season rates instead of honouring the prices they booked at (#1036).
-      const createdGuests: BookingGuest[] = [];
-      for (let i = 0; i < normalizedNewGuests.length; i++) {
-        const guest = await tx.bookingGuest.create({
-          data: {
-            bookingId,
-            firstName: normalizedNewGuests[i].firstName,
-            lastName: normalizedNewGuests[i].lastName,
-            ageTier: normalizedNewGuests[i].ageTier,
-            isMember: normalizedNewGuests[i].isMember,
-            memberId: normalizedNewGuests[i].memberId || null,
-            stayStart: booking.checkIn,
-            stayEnd: booking.checkOut,
-            priceCents: newGuestPrice.guests[i].priceCents,
-            nights: {
-              create: (newGuestPrice.guests[i].nightDates ?? []).map(
-                (stayDate, k) => ({
-                  stayDate,
-                  priceCents: newGuestPrice.guests[i].perNightCents[k] ?? 0,
-                }),
-              ),
-            },
-          },
-        });
-        createdGuests.push(guest);
-      }
-
-      // Recalculate total booking price with all guests
+      // Price the whole post-add party together (#1095): the group discount
+      // depends on party size per night, so a new guest joining a qualifying
+      // party must price at the discounted rate — a standalone new-guest
+      // pricing pass can never see the party. Existing guests are fully
+      // locked (#1036), so the new guests' slices of this breakdown are
+      // exactly their own prices.
       const allGuestsForPricing = [
         ...booking.guests.map((g) => ({
           bookingGuestId: g.id,
@@ -420,26 +372,73 @@ export async function POST(
           // a guest must cost exactly the added guest's own price.
           lockedNightPrices: lockedNightPricesForGuest(g),
         })),
-        ...newGuestInputs.map((guest, index) => ({
-          ...guest,
-          bookingGuestId: createdGuests[index]?.id ?? null,
-        })),
+        ...newGuestInputs,
       ];
       const requiresAdminReview = requiresAdultSupervisionReview(allGuestsForPricing);
       const adminReviewReason = requiresAdminReview
         ? ADULT_SUPERVISION_REVIEW_REASON
         : null;
 
-      const fullPriceBreakdown = await priceBookingGuestsWithMembershipTypePolicy(tx, {
-        ownerMemberId: booking.memberId,
-        checkIn: booking.checkIn,
-        checkOut: booking.checkOut,
-        guests: allGuestsForPricing,
-        seasons: seasonRateData,
-        seasonYear,
+      const groupDiscountSetting = await tx.groupDiscountSetting.findUnique({
+        where: { id: "default" },
       });
+
+      let fullPriceBreakdown;
+      try {
+        fullPriceBreakdown = await priceBookingGuestsWithMembershipTypePolicy(tx, {
+          ownerMemberId: booking.memberId,
+          checkIn: booking.checkIn,
+          checkOut: booking.checkOut,
+          guests: allGuestsForPricing,
+          seasons: seasonRateData,
+          groupDiscount: toGroupDiscountConfig(groupDiscountSetting),
+          seasonYear,
+        });
+      } catch (error) {
+        if (error instanceof MembershipTypeBookingPolicyError) {
+          throw error;
+        }
+        throw new ApiError(
+          "No season rate found for the booking dates",
+          400
+        );
+      }
+
+      // Create BookingGuest records from their slice of the full-party
+      // breakdown, persisting one BookingGuestNight row per priced night
+      // (#1093) so added guests join the uniform night-row model: without
+      // rows, a later edit would reprice their whole stay at current season
+      // rates instead of honouring the prices they booked at (#1036).
+      const createdGuests: BookingGuest[] = [];
+      for (let i = 0; i < normalizedNewGuests.length; i++) {
+        const priced = fullPriceBreakdown.guests[booking.guests.length + i];
+        const guest = await tx.bookingGuest.create({
+          data: {
+            bookingId,
+            firstName: normalizedNewGuests[i].firstName,
+            lastName: normalizedNewGuests[i].lastName,
+            ageTier: normalizedNewGuests[i].ageTier,
+            isMember: normalizedNewGuests[i].isMember,
+            memberId: normalizedNewGuests[i].memberId || null,
+            stayStart: booking.checkIn,
+            stayEnd: booking.checkOut,
+            priceCents: priced.priceCents,
+            nights: {
+              create: (priced.nightDates ?? []).map((stayDate, k) => ({
+                stayDate,
+                priceCents: priced.perNightCents[k] ?? 0,
+              })),
+            },
+          },
+        });
+        createdGuests.push(guest);
+      }
+
       const guestNightRates = allGuestsForPricing.map((guest, index) => ({
-        bookingGuestId: guest.bookingGuestId,
+        bookingGuestId:
+          index < booking.guests.length
+            ? booking.guests[index].id
+            : createdGuests[index - booking.guests.length]?.id ?? null,
         memberId: guest.memberId ?? null,
         isMember: guest.isMember,
         perNightRates: fullPriceBreakdown.guests[index].perNightCents,
@@ -642,59 +641,21 @@ export async function POST(
       };
     });
 
-    // Create additional PaymentIntent for price increases (outside transaction to avoid holding advisory lock)
-    let additionalPaymentClientSecret: string | undefined;
-    let additionalPaymentIntentId: string | undefined;
-    if (result.additionalAmountCents > 0 && result.hasSucceededPayment && result.paymentId) {
-      try {
-        let customerId = result.paymentCustomerId ?? undefined;
-        if (!customerId) {
-          const customer = await findOrCreateCustomer({
-            email: result.memberEmail,
-            name: result.memberName,
-            memberId: result.memberId,
-          });
-          customerId = customer.id;
-        }
-
-        const pi = await createPaymentIntent({
-          amountCents: result.additionalAmountCents,
-          customerId,
-          metadata: {
-            bookingId,
-            type: "modification_additional",
-            reason: "guest_add_price_increase",
-          },
-          idempotencyKey: `mod_guest_${bookingId}_${result.bookingModificationId}`,
-        });
-
-        await queueSupersededAdditionalIntentCancellations({
-          bookingId,
-          paymentId: result.paymentId,
-          newPaymentIntentId: pi.id,
-        }).catch((err) =>
-          logger.error(
-            { err, bookingId, paymentIntentId: pi.id },
-            "Failed to queue superseded additional intent cancellations"
-          )
-        );
-
-        await upsertPaymentIntentTransaction({
-          paymentId: result.paymentId,
-          kind: PaymentTransactionKind.ADDITIONAL,
-          paymentIntentId: pi.id,
-          amountCents: result.additionalAmountCents,
-          status: PaymentStatus.PENDING,
-          reason: "guest_add_price_increase",
-          stripeCustomerId: customerId,
-        });
-
-        additionalPaymentClientSecret = pi.client_secret ?? undefined;
-        additionalPaymentIntentId = pi.id;
-      } catch (piErr) {
-        logger.error({ err: piErr, bookingId }, "Failed to create additional PaymentIntent for guest addition");
-      }
-    }
+    // Create additional PaymentIntent for price increases (outside transaction
+    // to avoid holding the advisory lock). Shared settlement helper (#1096):
+    // a transient Stripe failure enqueues a durable recovery operation keyed
+    // to this modification instead of only logging.
+    const { additionalPaymentClientSecret, additionalPaymentIntentId } =
+      await createModificationAdditionalPaymentIntent({
+        bookingId,
+        // Guest adds never decrease the price, so the shared settlement
+        // context's refund side is always zero here.
+        result: { ...result, pendingRefundAmountCents: 0 },
+        reason: "guest_add_price_increase",
+        idempotencyKey: `mod_guest_${bookingId}_${result.bookingModificationId}`,
+        failureMessage:
+          "Failed to create additional PaymentIntent for guest addition",
+      });
 
     // Audit log
     logAudit({

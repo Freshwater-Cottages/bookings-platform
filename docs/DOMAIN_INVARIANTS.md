@@ -125,7 +125,23 @@ gets night rows at creation so later edits honour the prices they joined at.
 The waitlist offer reprice is the other deliberate exception: an offer re-bases
 the whole booking at current rates before the member confirms, and the offer
 email states that price. Legacy guests without stored night rows price at
-current rates.
+current rates; a one-off backfill migration (#1098) synthesised rows for
+pre-#713 guests on live, non-quote-priced bookings (stored price split evenly
+across the stay envelope, integer cents, remainder on the first night), so
+that fallback now covers only quote-priced bookings — already protected by
+the #1032 edit block — and rows created outside the app.
+
+Every edit path passes the default group discount into pricing exactly as
+creation and the waitlist reprice do (#1095), and locks win over the discount:
+a night a guest already bought keeps its locked (discount-inclusive) price, so
+a party dropping below the minimum on removal never loses a discount it
+bought, and the discount applies only to newly priced nights — a guest added
+to a qualifying party, or nights a date change adds. Eligibility is per night
+and per party size on that night: a partial-stay guest's absent nights do not
+count toward the minimum. The modify-quote preview prices with the same
+config so previews match what the mutating paths charge. The guest-add route
+therefore prices the whole post-add party in one pass — the added guest's
+stored price and night rows are their slice of the combined breakdown.
 
 Every booking-reduction path — batch modify (`removeGuestIds`/date change),
 single-guest removal (`DELETE …/guests/[guestId]`), and date change
@@ -160,7 +176,14 @@ refunds captured payments per the policy.
 
 A booking converted from (or held for) a public/school booking request keeps
 its officer-negotiated price, flat-split across guest rows; the quote's
-per-tier rates are not persisted on the booking. Standard edit paths (batch
+per-tier rates are not persisted on the booking. Before a school group
+arrives, the school contact confirms who is attending (#1101): a tokenized
+public page (hash-stored, rotated per reminder email) applies identity-only
+name updates through the same price-preserving machinery as quoted-booking
+edits, and the explicit confirmation is stored on the booking request.
+Headcount or tier changes still go through the admin re-quote flow, and
+unconfirmed lists inside the prompt window surface on the stuck-state
+dashboard. Standard edit paths (batch
 modify, date change, guest add, single-guest removal, and the modify-quote
 preview) refuse such bookings rather than silently repricing every guest at
 season rates — the change is made by re-pricing or issuing a revised quote

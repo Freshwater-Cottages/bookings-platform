@@ -57,7 +57,7 @@ export function MemberFilterToolbar({
           value={filters.role || "all"}
           onValueChange={(value) => onSetFilter("role", value === "all" ? "" : value)}
         >
-          <SelectTrigger className="w-[160px]">
+          <SelectTrigger className="w-[160px]" aria-label="Filter by access role">
             <SelectValue placeholder="Access Role" />
           </SelectTrigger>
           <SelectContent>
@@ -75,7 +75,7 @@ export function MemberFilterToolbar({
             onSetFilter("lifecycleStatus", value === "nonArchived" ? "" : value)
           }
         >
-          <SelectTrigger className="w-[155px]">
+          <SelectTrigger className="w-[155px]" aria-label="Filter by member status">
             <SelectValue placeholder="Status" />
           </SelectTrigger>
           <SelectContent>
@@ -91,7 +91,7 @@ export function MemberFilterToolbar({
           value={filters.ageTier || "all"}
           onValueChange={(value) => onSetFilter("ageTier", value === "all" ? "" : value)}
         >
-          <SelectTrigger className="w-[130px]">
+          <SelectTrigger className="w-[130px]" aria-label="Filter by age tier">
             <SelectValue placeholder="Age Tier" />
           </SelectTrigger>
           <SelectContent>
@@ -106,7 +106,7 @@ export function MemberFilterToolbar({
           value={filters.familyGroup || "all"}
           onValueChange={(value) => onSetFilter("familyGroup", value === "all" ? "" : value)}
         >
-          <SelectTrigger className="w-[150px]">
+          <SelectTrigger className="w-[150px]" aria-label="Filter by family group">
             <SelectValue placeholder="Family Group" />
           </SelectTrigger>
           <SelectContent>
@@ -119,7 +119,7 @@ export function MemberFilterToolbar({
           value={filters.inviteStatus || "all"}
           onValueChange={(value) => onSetFilter("inviteStatus", value === "all" ? "" : value)}
         >
-          <SelectTrigger className="w-[165px]">
+          <SelectTrigger className="w-[165px]" aria-label="Filter by invite status">
             <SelectValue placeholder="Invite Status" />
           </SelectTrigger>
           <SelectContent>
@@ -133,7 +133,7 @@ export function MemberFilterToolbar({
           value={filters.xeroLinked || "all"}
           onValueChange={(value) => onSetFilter("xeroLinked", value === "all" ? "" : value)}
         >
-          <SelectTrigger className="w-[130px]">
+          <SelectTrigger className="w-[130px]" aria-label="Filter by Xero link">
             <SelectValue placeholder="Xero" />
           </SelectTrigger>
           <SelectContent>
@@ -146,7 +146,7 @@ export function MemberFilterToolbar({
           value={filters.subscription || "all"}
           onValueChange={(value) => onSetFilter("subscription", value === "all" ? "" : value)}
         >
-          <SelectTrigger className="w-[170px]">
+          <SelectTrigger className="w-[170px]" aria-label="Filter by subscription">
             <SelectValue placeholder="Subscription" />
           </SelectTrigger>
           <SelectContent>
@@ -166,7 +166,7 @@ export function MemberFilterToolbar({
               onSetFilter("xeroContactGroup", value === "all" ? "" : value)
             }
           >
-            <SelectTrigger className="w-[170px]">
+            <SelectTrigger className="w-[170px]" aria-label="Filter by Xero contact group">
               <SelectValue placeholder="Xero Group" />
             </SelectTrigger>
             <SelectContent>

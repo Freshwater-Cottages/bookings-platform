@@ -135,3 +135,38 @@ When promoting this target from local staging to a shared host:
 5. Keep `BACKUP_ENABLED=false` unless the test explicitly covers backup behavior.
 6. Verify `/api/health` and `/api/health/ready` before starting browser checks.
 7. Record the staging origin and auth path in the review issue or release notes.
+
+## Automated Axe Findings (2026-07-04)
+
+The automated axe pass over the member flow and key admin pages (#1106) was
+resolved as follows: row-select checkboxes and filter selects on
+`/admin/members` carry accessible names, the booking wizard's working-bee
+select and the booking detail preferred-room select are labelled, the wizard
+step indicator and dashboard draft-expiry text meet AA contrast
+(`text-gray-600` / `text-amber-700`), `/login` has a screen-reader `h1`,
+wizard/profile heading levels descend without jumps, and the top navigation
+and admin sidebar `nav` landmarks are labelled ("Primary" / "Admin
+sections"). `/admin/bookings` select names and chip contrast were fixed by
+the PR #1102 Radix conversion. The full manual pass described above remains
+outstanding.
+
+## Manual Staging Pass (2026-07-04)
+
+Run against the local staging compose stack at latest `main` (post-#1123):
+axe-core (WCAG 2.1 AA + best-practice) across 17 pages — public (`/`,
+`/login`, `/register`, `/forgot-password`, `/booking-requests`), the
+two-factor enrolment flow, member (`/dashboard`, `/book`, `/profile`,
+`/bookings`), and admin (members, bookings, booking-requests, health,
+stuck-states, booking-policies) — plus keyboard spot checks on `/login`.
+
+Fixed in this pass (#1170): public request form guest labels/select
+association, invalid `autocomplete` token in the address autocomplete,
+theme-switcher inactive-label contrast, `.website-eyebrow` contrast under
+themable brand colours, booking-calendar availability-count contrast, a
+skip-to-content link on both website layouts (the `/login` form sat 28 tab
+stops deep), and a `/forgot-password` h1.
+
+Remaining (moderate/best-practice) — handed to the #1149 deep pass with
+full axe data: missing h1 on `/login/enroll` and the admin pages, and
+website-footer h3 heading order on sparse pages. Screen-reader (NVDA/
+VoiceOver) walkthroughs remain a human task.

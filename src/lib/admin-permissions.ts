@@ -258,6 +258,7 @@ const ROUTE_AREA_PREFIXES: Array<{
   {
     area: "support",
     prefixes: [
+      "/admin/access-roles",
       "/admin/setup",
       "/admin/modules",
       "/admin/subscription-lockout",
@@ -272,6 +273,7 @@ const ROUTE_AREA_PREFIXES: Array<{
       "/admin/stuck-states",
       "/admin/issue-reports",
       "/admin/audit-log",
+      "/api/admin/access-roles",
       "/api/admin/setup",
       "/api/admin/modules",
       "/api/admin/notifications",
@@ -430,11 +432,6 @@ export function hasAdminAreaAccess(
     LEVEL_RANK[getAdminPermissionLevel(input, requirement.area)] >=
     LEVEL_RANK[requirement.level]
   );
-}
-
-export function hasAnyAdminRequirementAccess(input: AccessRoleInput) {
-  const matrix = getAdminPermissionMatrix(input);
-  return ADMIN_PERMISSION_AREAS.some((area) => matrix[area.key] !== "none");
 }
 
 export function getFirstAccessibleAdminHref(input: AccessRoleInput) {

@@ -95,6 +95,9 @@ adopters can find the contract without reading the whole application.
 
 `src/lib/xero.ts` is a 199-line compatibility facade for older imports. Prefer
 direct imports from the focused modules below for new code.
+[`docs/xero/ARCHITECTURE.md`](xero/ARCHITECTURE.md) maps the subsystem in
+depth: runtime dataflow, ledger data model, and sequence diagrams for the
+outbound-document, inbound-reconciliation, and repair flows.
 
 | Concern | Focused modules | Notes |
 | --- | --- | --- |
@@ -447,7 +450,23 @@ per-transaction allocation on the row (`allocationPlan`) before the first
 Stripe call. Retries replay those exact slices with their original
 idempotency keys — Stripe answers repeats with the original refund and the
 `PaymentRefund` ledger dedupes by refund id — instead of re-deriving a
-shifted allocation from whatever progress happens to be recorded.
+shifted allocation from whatever progress happens to be recorded. The
+recovery row also carries the originating route's Stripe key prefix
+(`stripeKeyPrefix`, #1152), so even a refund that succeeded on Stripe but was
+never recorded locally is replayed under its original keys rather than
+re-minted — the same guarantee refund-request recoveries have had since
+#1039.
+
+Additional PaymentIntent creation has the same durable safety net (#1096):
+every price-increasing edit path (batch modify, date change, guest add,
+single-guest removal) creates the intent through one shared settlement
+helper, and a transient Stripe failure enqueues a
+`CREATE_ADDITIONAL_PAYMENT_INTENT` recovery operation keyed to the booking
+modification. The worker re-creates the intent with the original
+modification-scoped Stripe idempotency key (so route and cron can never
+double-mint), skips itself if a later edit already minted a newer additional
+intent, and points any supplementary Xero invoice operation still waiting on
+the failed intent at the recovered one.
 
 Group-settlement PaymentIntents get the same safety net: switching a group
 settlement to Internet Banking or re-attempting a card settlement voids the
@@ -527,6 +546,7 @@ disable cron with `CRON_ENABLED=false`.
 | `pre-arrival-reminders` | Every 3 hours | Send current directions and door-code reminders before check-in |
 | `purge-booking-requests` | Every 3 hours | Delete expired declined and never-verified public booking requests after the retention window |
 | `quote-expiry-reminders` | Every 3 hours | Remind public booking-request quote recipients before their quote link expires (sends a fresh working link) |
+| `school-attendee-confirmations` | Every 3 hours | Prompt school contacts to confirm their attendee list before check-in (#1101): first email `attendeeConfirmationLeadDays` before arrival, re-sent every `attendeeConfirmationReminderDays` with a fresh tokenized link until confirmed or check-in |
 | `payment-recovery` | Every 15 minutes | Cancel or refund superseded Stripe PaymentIntents |
 | `waitlist-processor` | Every 30 minutes | Expire offers and advance waitlist |
 | `email-retry` | Every 30 minutes | Retry failed email sends |

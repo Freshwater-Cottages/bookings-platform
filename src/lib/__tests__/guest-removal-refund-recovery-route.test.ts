@@ -46,6 +46,7 @@ vi.mock("@/lib/payment-transactions", () => ({
   refundPaymentTransactions: mocks.refundPaymentTransactions,
 }));
 vi.mock("@/lib/payment-recovery", () => ({
+  enqueueAdditionalPaymentIntentRecovery: vi.fn().mockResolvedValue({ id: "recovery_additional" }),
   enqueueBookingModificationRefundRecovery:
     mocks.enqueueBookingModificationRefundRecovery,
 }));
@@ -135,6 +136,8 @@ describe("DELETE /api/bookings/[id]/guests/[guestId] refund recovery", () => {
       paymentId: "pay_1",
       bookingModificationId: "mod_1",
       amountCents: 2000,
+      // The route's exact Stripe key prefix rides on the recovery row (#1152).
+      stripeKeyPrefix: "guest_remove_refund_b1_mod_1",
     });
   });
 
