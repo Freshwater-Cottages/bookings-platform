@@ -480,6 +480,15 @@ export default async function BookingDetailPage({
     !isProvisionalChild &&
     !isFlaggedProvisional;
 
+  // The Stripe payment card and the payment-required banner render under the
+  // same condition so the banner can never point at a missing card.
+  const showCompletePaymentCard =
+    canManageBooking &&
+    !isDeleted &&
+    !internetBankingPayment &&
+    isPaymentOwedBookingStatus(booking.status) &&
+    (!booking.payment || booking.payment.status !== "SUCCEEDED");
+
   // Issue #778: surface auto-applied member credit (display only). Credit nets
   // off the booking price, so amount due = finalPriceCents - creditAppliedCents.
   const creditAppliedCents = booking.payment?.creditAppliedCents ?? 0;
@@ -605,6 +614,18 @@ export default async function BookingDetailPage({
           </Link>
         </div>
       </div>
+
+      {showCompletePaymentCard && (
+        <div className="rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          <p className="font-medium">Payment required</p>
+          <p>{paymentRequiredDescription}</p>
+          <p className="mt-1">
+            <a href="#payment" className="font-medium underline">
+              Go to payment
+            </a>
+          </p>
+        </div>
+      )}
 
       {isDeleted ? (
         <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">
@@ -978,8 +999,8 @@ export default async function BookingDetailPage({
       )}
 
       {/* Show payment form if payment hasn't been completed */}
-      {(canManageBooking && !isDeleted && !internetBankingPayment && isPaymentOwedBookingStatus(booking.status) && (!booking.payment || booking.payment.status !== "SUCCEEDED")) && (
-        <Card>
+      {showCompletePaymentCard && (
+        <Card id="payment" className="scroll-mt-4">
           <CardHeader>
             <CardTitle>Complete Payment</CardTitle>
           </CardHeader>
