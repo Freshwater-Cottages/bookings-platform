@@ -304,34 +304,49 @@ const navSections: NavSection[] = [
   },
 ];
 
+// test seam
 export function getVisibleAdminNavSections(
   features: FeatureFlags,
   permissionMatrix?: AdminPermissionMatrix,
   isFullAdmin?: boolean,
+  hutLeaderLabel = "Hut Leader",
 ): NavSection[] {
   return navSections
     .map((section) => ({
       ...section,
-      items: section.items.filter(
-        (item) =>
-          isFeatureHrefVisible(item.href, features) &&
-          (!item.fullAdminOnly || isFullAdmin) &&
-          (!permissionMatrix ||
-            canViewAdminHrefWithMatrix(permissionMatrix, item.href)),
-      ),
+      items: section.items
+        .filter(
+          (item) =>
+            isFeatureHrefVisible(item.href, features) &&
+            (!item.fullAdminOnly || isFullAdmin) &&
+            (!permissionMatrix ||
+              canViewAdminHrefWithMatrix(permissionMatrix, item.href)),
+        )
+        .map((item) =>
+          item.href === "/admin/hut-leaders"
+            ? { ...item, label: `${hutLeaderLabel}s` }
+            : item,
+        ),
     }))
     .filter((section) => section.items.length > 0);
 }
 
 type AdminNavBadgeMap = Record<string, number>;
 
+// test seam
 export function getRenderedAdminNavSections(
   features: FeatureFlags,
   badges: AdminNavBadgeMap,
   permissionMatrix?: AdminPermissionMatrix,
   isFullAdmin?: boolean,
+  hutLeaderLabel = "Hut Leader",
 ): NavSection[] {
-  return getVisibleAdminNavSections(features, permissionMatrix, isFullAdmin)
+  return getVisibleAdminNavSections(
+    features,
+    permissionMatrix,
+    isFullAdmin,
+    hutLeaderLabel,
+  )
     .map((section) =>
       section.label === NEEDS_ATTENTION_LABEL
         ? {
@@ -387,11 +402,13 @@ function SidebarLinks({
   features,
   permissionMatrix,
   isFullAdmin,
+  hutLeaderLabel = "Hut Leader",
   onNavigate,
 }: {
   features: FeatureFlags;
   permissionMatrix?: AdminPermissionMatrix;
   isFullAdmin?: boolean;
+  hutLeaderLabel?: string;
   onNavigate?: () => void;
 }) {
   const pathname = usePathname();
@@ -469,11 +486,13 @@ function SidebarLinks({
     badges,
     permissionMatrix,
     isFullAdmin,
+    hutLeaderLabel,
   );
   const visibleNavSections = getVisibleAdminNavSections(
     features,
     permissionMatrix,
     isFullAdmin,
+    hutLeaderLabel,
   );
 
   // Highlight the most specific nav item whose href is a prefix of the current
@@ -578,10 +597,12 @@ export function AdminSidebar({
   features,
   permissionMatrix,
   isFullAdmin,
+  hutLeaderLabel = "Hut Leader",
 }: {
   features: FeatureFlags;
   permissionMatrix?: AdminPermissionMatrix;
   isFullAdmin?: boolean;
+  hutLeaderLabel?: string;
 }) {
   const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -600,6 +621,7 @@ export function AdminSidebar({
             features={features}
             permissionMatrix={permissionMatrix}
             isFullAdmin={isFullAdmin}
+            hutLeaderLabel={hutLeaderLabel}
           />
         </div>
       </aside>
@@ -624,6 +646,7 @@ export function AdminSidebar({
                 features={features}
                 permissionMatrix={permissionMatrix}
                 isFullAdmin={isFullAdmin}
+                hutLeaderLabel={hutLeaderLabel}
                 onNavigate={() => setMobileOpen(false)}
               />
             </div>
