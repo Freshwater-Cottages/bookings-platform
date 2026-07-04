@@ -67,11 +67,36 @@ test("declined test-mode card leaves the booking payable", async ({ page }) => {
 
   await payWithCard(page, TEST_CARDS.declined);
 
-  // Stripe surfaces the decline inside the wizard; no success state appears
-  // and the member can retry payment.
-  await expect(
-    page.getByText(/declined|unable to process|payment failed/i).first(),
-  ).toBeVisible({ timeout: 45_000 });
+  // The decline is surfaced to the member either as the app's own error copy
+  // ("Your card has been declined.") on the page, or as the Payment Element's
+  // inline error inside its Stripe iframe ("Your card was declined."). Accept
+  // whichever surface renders — the app confirmed it does render Stripe's
+  // error.message on the confirmPayment error branch (#1224).
+  const declineCopy =
+    /declin|unable to process|payment failed|card (was|has been) declined/i;
+  await expect(async () => {
+    const appVisible = await page
+      .getByText(declineCopy)
+      .first()
+      .isVisible()
+      .catch(() => false);
+    let frameVisible = false;
+    for (const frame of page.frames()) {
+      if (!/stripe/i.test(frame.url())) continue;
+      if (
+        await frame
+          .getByText(declineCopy)
+          .first()
+          .isVisible()
+          .catch(() => false)
+      ) {
+        frameVisible = true;
+        break;
+      }
+    }
+    expect(appVisible || frameVisible).toBe(true);
+  }).toPass({ timeout: 45_000 });
+
   await expect(page.getByText("Payment successful!")).not.toBeVisible();
   await expect(page.getByRole("button", { name: "Pay Now" })).toBeVisible();
 });
