@@ -11,8 +11,11 @@ import SetupForm from "./SetupForm";
  * Report a payment-initialization failure to ops WITHOUT ever surfacing the raw
  * provider detail to the member (#1223). The raw detail (from the API response
  * or a thrown error) can contain partial key material such as
- * "Invalid API Key provided: sk_test_***", so it must never be rendered — it is
- * logged here and the UI shows only generic, member-safe copy.
+ * "Invalid API Key provided: sk_test_***", so it must never be rendered AND must
+ * not reach the member's browser console — it is sent only to Sentry, whose
+ * `beforeSend` scrubs `sk_*`/secret material before ingestion. The UI shows only
+ * generic, member-safe copy. The client-side console log is intentionally
+ * detail-free (bookingId only) so no key fragment lands in a member's DevTools.
  */
 function reportPaymentInitError(bookingId: string, detail: unknown) {
   Sentry.captureException(
@@ -23,7 +26,7 @@ function reportPaymentInitError(bookingId: string, detail: unknown) {
         ),
     { tags: { area: "booking-payment-init" }, extra: { bookingId, detail } }
   );
-  console.error("Booking payment initialization failed", { bookingId, detail });
+  console.error("Booking payment initialization failed", { bookingId });
 }
 
 interface BookingPaymentWrapperProps {

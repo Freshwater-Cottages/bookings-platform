@@ -104,12 +104,17 @@ describe("BookingPaymentWrapper", () => {
     expect(document.body.textContent).not.toContain("Invalid API Key");
     expect(screen.queryByText(/Invalid API Key/i)).toBeNull();
 
-    // The raw detail is preserved for ops via the client error-reporting path.
+    // The detail is reported to Sentry (scrubbed by beforeSend), NOT to the
+    // member's browser console — the client console log carries bookingId only,
+    // so no raw provider/key material lands in a member's DevTools (#1223).
     expect(Sentry.captureException).toHaveBeenCalledTimes(1);
     expect(consoleErrorSpy).toHaveBeenCalledWith(
       "Booking payment initialization failed",
-      expect.objectContaining({ bookingId: "booking-1", detail: rawProviderError })
+      { bookingId: "booking-1" }
     );
+    const consoleArgs = JSON.stringify(consoleErrorSpy.mock.calls);
+    expect(consoleArgs).not.toContain("sk_test");
+    expect(consoleArgs).not.toContain("Invalid API Key");
 
     consoleErrorSpy.mockRestore();
   });
