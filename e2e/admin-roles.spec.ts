@@ -20,7 +20,7 @@ import { ROLE_PERSONAS } from "./helpers/fixtures";
 
 test.describe.configure({ mode: "serial" });
 
-test("read-only admin views admin areas but not the finance workspace", async ({
+test("read-only admin views every area but cannot write", async ({
   page,
 }) => {
   await loginPersona(page, ROLE_PERSONAS.ADMIN_READONLY.email);
@@ -31,10 +31,16 @@ test("read-only admin views admin areas but not the finance workspace", async ({
   await page.goto("/admin/bookings");
   await expect(page).toHaveURL(/\/admin\/bookings/);
 
-  // Out-of-area: read-only admin is not a finance viewer, so the separate
-  // /finance workspace bounces it back to the member dashboard.
+  // Since the editable access-roles change (#1184), ADMIN_READONLY carries
+  // finance: view, so the /finance workspace renders read-only rather than
+  // bouncing. The boundary that defines this role is edit, not area: a
+  // membership write is refused even though the membership pages render.
   await page.goto("/finance");
-  await expect(page).toHaveURL(/\/dashboard/);
+  await expect(page).toHaveURL(/\/finance/);
+  const write = await page.request.post("/api/admin/members", {
+    data: { firstName: "Blocked", lastName: "Write" },
+  });
+  expect(write.status()).toBe(403);
 });
 
 test("booking officer manages bookings but is blocked from content", async ({

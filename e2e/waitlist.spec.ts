@@ -34,6 +34,9 @@ let memberContext: BrowserContext;
 let adminContext: BrowserContext;
 
 test.beforeAll(async ({ browser }) => {
+  // Two fresh logins incl. first-time two-factor enrollment: needs more than
+  // the default 90s hook budget on a loaded CI runner.
+  test.setTimeout(240_000);
   memberContext = await browser.newContext();
   const memberPage = await memberContext.newPage();
   await loginPersona(memberPage, WAITLISTER.email);
