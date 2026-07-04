@@ -72,7 +72,11 @@ export type ClubThemeValues = Record<ClubThemeColourKey, string> & {
 };
 
 export const DEFAULT_CLUB_THEME_VALUES: ClubThemeValues = {
-  brandGold: "#7a8f6a",
+  // brandGold is the primary-action colour with brand-charcoal button text
+  // (see .website-theme --primary/--primary-foreground). It must clear WCAG AA
+  // 4.5:1 against brand-charcoal; #8fa87c gives 4.8:1 (the earlier #7a8f6a was
+  // 3.55:1 and failed getBlockingContrastWarnings, blocking first-run save).
+  brandGold: "#8fa87c",
   brandCharcoal: "#30343b",
   brandDeep: "#1f2933",
   brandRidge: "#65717b",
@@ -364,4 +368,19 @@ export function getContrastWarnings(
   }
 
   return warnings;
+}
+
+/**
+ * The subset of contrast warnings that must block a save: pairs whose ratio is
+ * measurable and below the WCAG AA 4.5:1 text minimum. OKLCH colours can't be
+ * measured with the sRGB luminance formula (ratio === null) and stay advisory
+ * rather than blocking an otherwise-legitimate theme, so callers can enforce a
+ * hard gate without rejecting valid oklch() palettes.
+ */
+export function getBlockingContrastWarnings(
+  value: Partial<Record<keyof ClubThemeValues, unknown>>,
+): ContrastWarning[] {
+  return getContrastWarnings(value).filter(
+    (warning) => warning.ratio !== null && warning.ratio < 4.5,
+  );
 }

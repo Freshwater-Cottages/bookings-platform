@@ -4,6 +4,7 @@ import {
   buildClubThemeCss,
   clubThemeUpdateSchema,
   contrastRatio,
+  getBlockingContrastWarnings,
   getContrastWarnings,
   isValidLogoDataUrl,
   sanitiseRawCss,
@@ -60,6 +61,51 @@ describe("club theme validation", () => {
     expect(warnings.some((warning) => warning.id === "body-on-snow")).toBe(
       true,
     );
+  });
+});
+
+describe("getBlockingContrastWarnings", () => {
+  it("passes the shipped default palette (first-run setup is not blocked)", () => {
+    expect(getBlockingContrastWarnings(DEFAULT_CLUB_THEME_VALUES)).toEqual([]);
+  });
+
+  it("blocks a measurable sub-AA pair", () => {
+    // brand-charcoal button text on a near-identical gold is unreadable.
+    const blocking = getBlockingContrastWarnings({
+      ...DEFAULT_CLUB_THEME_VALUES,
+      brandGold: "#33373e",
+      brandCharcoal: "#30343b",
+    });
+
+    expect(blocking.some((warning) => warning.id === "button-on-gold")).toBe(
+      true,
+    );
+    expect(
+      blocking.every(
+        (warning) => warning.ratio !== null && warning.ratio < 4.5,
+      ),
+    ).toBe(true);
+  });
+
+  it("keeps OKLCH pairs advisory rather than blocking (unmeasurable)", () => {
+    const values = {
+      ...DEFAULT_CLUB_THEME_VALUES,
+      brandGold: "oklch(0.6 0.1 140)",
+      brandCharcoal: "oklch(0.58 0.09 140)",
+    };
+
+    // getContrastWarnings still flags the pair for manual review (ratio null)...
+    expect(
+      getContrastWarnings(values).some(
+        (warning) => warning.id === "button-on-gold" && warning.ratio === null,
+      ),
+    ).toBe(true);
+    // ...but it must never hard-block a save.
+    expect(
+      getBlockingContrastWarnings(values).some(
+        (warning) => warning.id === "button-on-gold",
+      ),
+    ).toBe(false);
   });
 });
 
