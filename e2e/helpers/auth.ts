@@ -66,11 +66,23 @@ export function clearStoredTwoFactor(email: string): void {
   fs.rmSync(twoFactorPath(email), { force: true });
 }
 
+// Each persona logs in from its own synthetic client IP (via x-forwarded-for,
+// which getClientIp trusts the same way it trusts the reverse proxy in real
+// deployments). Without this, the serial suite's ~20 logins from one runner IP
+// exhaust the per-IP login rate limit (10 per 15 min) and late specs stall on
+// 429 retries. Deterministic per email so re-logins share their bucket.
+function syntheticClientIp(email: string): string {
+  let hash = 0;
+  for (const ch of email) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
+  return `10.99.${(hash >> 8) & 0xff}.${(hash & 0xfe) + 1}`;
+}
+
 export async function submitLoginForm(
   page: Page,
   email: string,
   password: string = DEMO_PASSWORD,
 ): Promise<void> {
+  await page.setExtraHTTPHeaders({ "x-forwarded-for": syntheticClientIp(email) });
   await page.goto("/login");
   // The login form transiently duplicates its inputs during hydration: #email
   // briefly resolves to TWO nodes right after a single-node settle. First seen

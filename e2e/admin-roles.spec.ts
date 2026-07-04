@@ -37,10 +37,21 @@ test("read-only admin views every area but cannot write", async ({
   // membership write is refused even though the membership pages render.
   await page.goto("/finance");
   await expect(page).toHaveURL(/\/finance/);
-  const write = await page.request.post("/api/admin/members", {
-    data: { firstName: "Blocked", lastName: "Write" },
+  // In-page fetch so the write carries the browser's full request context.
+  // The members route deliberately maps forbidden -> 401 "Unauthorized"
+  // (adminGuardOptions.forbiddenResponse override in
+  // src/app/api/admin/members/route.ts), so a refused write is 401 here, not
+  // the guard's default 403. Either way: view-only cannot create members.
+  const write = await page.evaluate(async () => {
+    const res = await fetch("/api/admin/members", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ firstName: "Blocked", lastName: "Write" }),
+    });
+    return { status: res.status, body: await res.text() };
   });
-  expect(write.status()).toBe(403);
+  expect(write.status, `write response: ${write.body}`).toBe(401);
+  expect(write.body).toContain("Unauthorized");
 });
 
 test("booking officer manages bookings but is blocked from content", async ({
@@ -110,9 +121,12 @@ test("finance viewer reaches the finance workspace but no admin portal", async (
   await page.goto("/finance");
   await expect(page).toHaveURL(/\/finance/);
 
-  // Out-of-area: empty admin matrix → any admin page bounces to /dashboard.
+  // Since #1184, FINANCE_USER carries finance: view in the admin matrix, so
+  // an out-of-area admin page bounces to its first accessible admin page (the
+  // finance-area /admin/payments), not the member dashboard. The boundary
+  // proven: it cannot reach the members area itself.
   await page.goto("/admin/members");
-  await expect(page).toHaveURL(/\/dashboard/);
+  await expect(page).toHaveURL(/\/admin\/payments/);
 });
 
 test("lodge role reaches lodge operations but no admin portal", async ({
