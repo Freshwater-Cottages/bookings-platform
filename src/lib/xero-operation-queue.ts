@@ -14,6 +14,7 @@ import {
   XeroOperationRetryError,
 } from "@/lib/xero-operation-retry";
 
+// test seam
 export const XERO_OPERATION_REQUEUE_TYPE = "REQUEUE";
 
 // The requeue correlation key is `${REQUEUE_CORRELATION_KEY_PREFIX}${originalOperationId}`.
@@ -43,6 +44,7 @@ function readQueuedRetryPayload(value: unknown): QueuedRetryPayload | null {
   };
 }
 
+// test seam
 export function buildXeroOperationRequeueCorrelationKey(operationId: string) {
   return buildXeroIdempotencyKey("xero-operation", "requeue", operationId);
 }

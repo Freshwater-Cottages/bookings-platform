@@ -11,6 +11,7 @@
 export { cleanupStaleCanonicalXeroObjectLinks } from "./xero-hardening-canonical-links";
 export { maybeNotifyXeroRepeatedFailure } from "./xero-hardening-repeated-failure";
 export {
+  // test seam
   buildXeroReconciliationReport,
   sendXeroReconciliationReport,
 } from "./xero-hardening-report";
