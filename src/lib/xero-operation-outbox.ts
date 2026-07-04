@@ -1474,6 +1474,7 @@ export async function enqueueXeroCreditNoteAllocationOperation(
   };
 }
 
+// test seam
 export async function enqueueXeroMembershipCancellationCreditNoteOperation(
   params: {
     subscriptionId: string;
@@ -1586,6 +1587,7 @@ export async function enqueueXeroMembershipCancellationCreditNoteOperation(
   };
 }
 
+// test seam
 export async function enqueueXeroMembershipCancellationContactOperation(
   params: {
     memberId: string;
