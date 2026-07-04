@@ -72,19 +72,17 @@ export async function payWithCard(page: Page, cardNumber: string): Promise<void>
   await frame.getByPlaceholder("MM / YY").fill("12/34");
   await frame.getByPlaceholder("CVC").fill("123");
 
-  // The Payment Element localizes its postal field by the browser's
-  // geography: NZ runs render a "Postal code" input, US CI runners render a
-  // "ZIP" input with 5-digit validation (#1218). Locate it by Stripe's stable
-  // input name and pick a value that satisfies whichever format rendered.
+  // The Payment Element always names this input postalCode, but localizes its
+  // required format by the runner's geography: US CI runners render a 5-digit
+  // ZIP (numeric, aria-required, placeholder "12345") while NZ renders a 4-digit
+  // postcode (#1218). The US variant is identifiable by its numeric example
+  // placeholder — there is no "ZIP"/aria-label text to match on — so key off the
+  // placeholder digits and fill a value valid for whichever format rendered.
   const postal = frame.locator('input[name="postalCode"]');
   if (await postal.isVisible().catch(() => false)) {
-    const hints = [
-      (await postal.getAttribute("placeholder").catch(() => null)) ?? "",
-      (await postal.getAttribute("aria-label").catch(() => null)) ?? "",
-    ]
-      .join(" ")
-      .toLowerCase();
-    await postal.fill(hints.includes("zip") ? "12345" : "3420");
+    const placeholder =
+      (await postal.getAttribute("placeholder").catch(() => null)) ?? "";
+    await postal.fill(/\d{5}/.test(placeholder) ? "12345" : "3420");
   }
 
   await page.getByRole("button", { name: "Pay Now" }).click();
