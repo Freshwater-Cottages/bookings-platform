@@ -1,6 +1,7 @@
-import { BookingRequestQuoteStatus } from "@prisma/client";
+import { BookingRequestQuoteStatus, BookingStatus } from "@prisma/client";
 import { issueActionToken } from "@/lib/action-tokens";
 import { logAudit } from "@/lib/audit";
+import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 import {
   getBookingRequestSettings,
   parseBookingRequestGuests,
@@ -23,29 +24,34 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 export async function sendQuoteExpiryReminders(): Promise<{
   remindedCount: number;
   failedCount: number;
+  releasedHoldCount: number;
 }> {
+  const now = new Date();
   const settings = await getBookingRequestSettings();
   const leadDays = settings.quoteReminderLeadDays;
-  if (leadDays <= 0) {
-    return { remindedCount: 0, failedCount: 0 };
-  }
-
-  const now = new Date();
-  const windowEnd = new Date(now.getTime() + leadDays * DAY_MS);
-
-  const quotes = await prisma.bookingRequestQuote.findMany({
-    where: {
-      status: BookingRequestQuoteStatus.SENT,
-      reminderSentAt: null,
-      responseTokenExpiresAt: { gt: now, lte: windowEnd },
-    },
-    include: { bookingRequest: true },
-  });
 
   let remindedCount = 0;
   let failedCount = 0;
 
-  for (const quote of quotes) {
+  // Phase 1: pre-expiry reminders. Disabled when leadDays <= 0, but the hold
+  // release in phase 2 still runs — an ignored quote's held bed must be freed
+  // regardless of the reminder setting (issue #1254).
+  const reminderQuotes =
+    leadDays > 0
+      ? await prisma.bookingRequestQuote.findMany({
+          where: {
+            status: BookingRequestQuoteStatus.SENT,
+            reminderSentAt: null,
+            responseTokenExpiresAt: {
+              gt: now,
+              lte: new Date(now.getTime() + leadDays * DAY_MS),
+            },
+          },
+          include: { bookingRequest: true },
+        })
+      : [];
+
+  for (const quote of reminderQuotes) {
     const request = quote.bookingRequest;
     const expiresAt = quote.responseTokenExpiresAt;
     if (!expiresAt) continue;
@@ -108,5 +114,106 @@ export async function sendQuoteExpiryReminders(): Promise<{
     }
   }
 
-  return { remindedCount, failedCount };
+  // Phase 2: release beds held for SENT quotes past their response window
+  // (issue #1254). Auto-hold-on-send means an unanswered quote would otherwise
+  // sterilise a bed until check-in; free it once the link lapses. The request
+  // stays QUOTE_SENT so an admin can re-quote (which re-holds); nothing here
+  // charges, emails, or cancels the request.
+  const releasedHoldCount = await releaseExpiredQuoteHolds(now);
+
+  return { remindedCount, failedCount, releasedHoldCount };
+}
+
+/**
+ * Free the AWAITING_REVIEW hold behind any SENT quote whose response token has
+ * expired (issue #1254). Idempotent and concurrency-safe: each release runs
+ * under the shared booking advisory lock and re-verifies, so a race with a
+ * late accept (quote flips to ACCEPTED; held row flips to PENDING) or a
+ * requester cancel is a no-op rather than cancelling a live booking.
+ */
+async function releaseExpiredQuoteHolds(now: Date): Promise<number> {
+  const expiredHeldQuotes = await prisma.bookingRequestQuote.findMany({
+    where: {
+      status: BookingRequestQuoteStatus.SENT,
+      responseTokenExpiresAt: { lte: now },
+      bookingRequest: { heldBookingId: { not: null } },
+    },
+    select: {
+      id: true,
+      version: true,
+      bookingRequestId: true,
+      bookingRequest: { select: { heldBookingId: true } },
+    },
+  });
+
+  let releasedHoldCount = 0;
+
+  for (const quote of expiredHeldQuotes) {
+    const heldBookingId = quote.bookingRequest.heldBookingId;
+    if (!heldBookingId) continue;
+
+    try {
+      const released = await prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+
+        // Re-read under the lock: only act while the request still points at
+        // this exact hold and the hold is still an unaccepted AWAITING_REVIEW
+        // row. An accept converts it to PENDING (and the quote to ACCEPTED), so
+        // we must never cancel that live booking.
+        const request = await tx.bookingRequest.findUnique({
+          where: { id: quote.bookingRequestId },
+          select: { heldBookingId: true },
+        });
+        if (request?.heldBookingId !== heldBookingId) return false;
+
+        const held = await tx.booking.findUnique({
+          where: { id: heldBookingId },
+          select: { status: true },
+        });
+        if (!held || held.status !== BookingStatus.AWAITING_REVIEW) {
+          return false;
+        }
+
+        await tx.booking.update({
+          where: { id: heldBookingId },
+          data: { status: BookingStatus.CANCELLED, nonMemberHoldUntil: null },
+        });
+        await reconcileBedAllocationsForBooking({
+          bookingId: heldBookingId,
+          db: tx,
+        });
+        await tx.bookingRequest.update({
+          where: { id: quote.bookingRequestId },
+          data: { heldBookingId: null },
+        });
+        return true;
+      });
+
+      if (released) {
+        releasedHoldCount += 1;
+        logAudit({
+          action: "booking_request.quote_hold_released_on_expiry",
+          targetId: quote.bookingRequestId,
+          entityType: "BookingRequest",
+          entityId: quote.bookingRequestId,
+          category: "booking",
+          outcome: "success",
+          summary:
+            "Released the bed held for an unanswered quote after its link expired",
+          metadata: {
+            quoteId: quote.id,
+            version: quote.version,
+            releasedBookingId: heldBookingId,
+          },
+        });
+      }
+    } catch (err) {
+      logger.error(
+        { err, quoteId: quote.id, bookingRequestId: quote.bookingRequestId },
+        "Failed to release expired quote hold",
+      );
+    }
+  }
+
+  return releasedHoldCount;
 }

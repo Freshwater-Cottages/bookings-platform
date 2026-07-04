@@ -98,6 +98,9 @@ vi.mock("@/lib/email", () => ({
 }));
 
 vi.mock("@/lib/audit", () => ({ logAudit: vi.fn() }));
+vi.mock("@/lib/bed-allocation-lifecycle", () => ({
+  reconcileBedAllocationsForBooking: vi.fn().mockResolvedValue(undefined),
+}));
 vi.mock("@/lib/capacity", () => ({
   checkCapacityForGuestRanges: vi.fn().mockResolvedValue({ available: true, nightDetails: [] }),
 }));
@@ -129,8 +132,12 @@ import {
   assertNoBookingMemberNightConflicts,
   BookingMemberNightConflictError,
 } from "@/lib/booking-member-night-conflicts";
+import { checkCapacityForGuestRanges } from "@/lib/capacity";
+import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 
 const mockedAssertNoConflicts = vi.mocked(assertNoBookingMemberNightConflicts);
+const mockedCheckCapacity = vi.mocked(checkCapacityForGuestRanges);
+const mockedReconcile = vi.mocked(reconcileBedAllocationsForBooking);
 
 function memberNightConflictError() {
   return new BookingMemberNightConflictError([
@@ -342,6 +349,11 @@ describe("sendBookingRequestQuote", () => {
       options: [],
       responseTokenExpiresAt: new Date("2026-08-01T00:00:00.000Z"),
     } as never);
+    // Auto-hold on send (#1254): the request already holds, so holdBookingRequestSlots
+    // short-circuits (reused) and the send proceeds.
+    vi.mocked(prisma.bookingRequest.findUnique).mockResolvedValue(
+      baseRequest({ heldBookingId: "held-1", quotes: [] }) as never
+    );
 
     await sendBookingRequestQuote({ requestId: "req-1", adminMemberId: "admin-1" });
 
@@ -378,6 +390,11 @@ describe("sendBookingRequestQuote", () => {
       options: [],
       responseTokenExpiresAt: new Date("2026-08-01T00:00:00.000Z"),
     } as never);
+    // Auto-hold on send (#1254): the request already holds, so the hold
+    // short-circuits (reused) and the send proceeds.
+    vi.mocked(prisma.bookingRequest.findUnique).mockResolvedValue(
+      baseRequest({ heldBookingId: "held-1", quotes: [] }) as never
+    );
   }
 
   it("reports emailDelivered true when the quote email sends", async () => {
@@ -431,6 +448,41 @@ describe("sendBookingRequestQuote", () => {
       .data as { reminderSentAt: Date | null };
     expect(updateData.reminderSentAt).toBeNull();
   });
+
+  it("blocks the send and does not mark SENT when the lodge is at capacity (issue #1254)", async () => {
+    // A DRAFT quote exists, but no hold is placed yet, so the send must first
+    // reserve the beds. When capacity is gone the send fails loudly instead of
+    // promising unreserved dates.
+    vi.mocked(prisma.bookingRequestQuote.findFirst).mockResolvedValue({
+      id: "quote-1",
+      bookingRequestId: "req-1",
+      version: 1,
+      status: BookingRequestQuoteStatus.DRAFT,
+      options: [],
+      message: null,
+      createdByMemberId: "admin-1",
+      bookingRequest: baseRequest(),
+    } as never);
+    vi.mocked(prisma.bookingRequest.findUnique).mockResolvedValue(
+      baseRequest({ priceCents: 12000, quotes: [] }) as never
+    );
+    vi.mocked(prisma.bookingRequest.updateMany).mockResolvedValue({ count: 1 } as never);
+    mockedCheckCapacity.mockResolvedValueOnce({
+      available: false,
+      minAvailable: -1,
+      nightDetails: [
+        { date: new Date("2026-08-01T00:00:00.000Z"), occupiedBeds: 10, availableBeds: -1 },
+      ],
+    } as never);
+
+    await expect(
+      sendBookingRequestQuote({ requestId: "req-1", adminMemberId: "admin-1" })
+    ).rejects.toMatchObject({ status: 409 });
+
+    // Quote is not marked SENT and no email goes out for an unreservable quote.
+    expect(prisma.bookingRequestQuote.update).not.toHaveBeenCalled();
+    expect(mockSendQuoteEmail).not.toHaveBeenCalled();
+  });
 });
 
 describe("public quote response", () => {
@@ -461,6 +513,47 @@ describe("public quote response", () => {
       expect.objectContaining({
         where: { responseTokenHash: hashActionToken(token) },
       })
+    );
+  });
+
+  it("cancels the held booking, frees its beds, and detaches heldBookingId (issue #1254)", async () => {
+    const token = "c".repeat(64);
+    vi.mocked(prisma.bookingRequestQuote.findUnique).mockResolvedValue({
+      id: "quote-1",
+      bookingRequestId: "req-1",
+      version: 1,
+      status: BookingRequestQuoteStatus.SENT,
+      createdByMemberId: "admin-1",
+      responseTokenExpiresAt: new Date(Date.now() + 60_000),
+      options: [
+        {
+          id: "STANDARD",
+          label: "Quote",
+          cateringOption: null,
+          totalCents: 1000,
+          pricingMode: BookingRequestPricingMode.OVERALL_TOTAL,
+          guestBreakdown: [],
+        },
+      ],
+      bookingRequest: baseRequest({ heldBookingId: "held-1" }),
+    } as never);
+
+    const result = await respondToBookingRequestQuote({ token, action: "CANCEL" });
+
+    expect(result).toEqual({ outcome: "cancelled" });
+    // The reserved hold is released so it stops consuming capacity...
+    expect(prisma.booking.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "held-1" },
+        data: { status: BookingStatus.CANCELLED, nonMemberHoldUntil: null },
+      })
+    );
+    expect(mockedReconcile).toHaveBeenCalledWith(
+      expect.objectContaining({ bookingId: "held-1" })
+    );
+    // ...and the pointer is detached so a future re-hold can never reuse it.
+    expect(prisma.bookingRequest.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { heldBookingId: null } })
     );
   });
 
