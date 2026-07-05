@@ -23,6 +23,7 @@ import {
   BookingStatus,
   PaymentStatus,
   Prisma,
+  Role,
   type BookingRequest,
 } from "@prisma/client";
 import { z } from "zod";
@@ -537,6 +538,71 @@ export async function declineBookingRequest(input: {
 }
 
 // ---------------------------------------------------------------------------
+// Contact mapping (issue #1255)
+// ---------------------------------------------------------------------------
+
+/**
+ * Non-login organisation/booking-contact roles a converted booking may be
+ * owned by. Login-capable members (real people, ORG accounts) are deliberately
+ * excluded so a booking request can never be mapped onto an account that can
+ * sign in.
+ */
+export const MAPPABLE_CONTACT_ROLES = [Role.NON_MEMBER, Role.SCHOOL] as const;
+
+/**
+ * Validate an admin-selected existing contact to own a converted booking
+ * (issue #1255). Enforces the invariant that a public booking request is NEVER
+ * mapped onto a login-capable member: only non-login NON_MEMBER/SCHOOL
+ * organisation contacts are eligible. Returns the contact id when valid and
+ * throws a BookingRequestError otherwise. Runs inside the approval/hold
+ * transaction (holding the booking advisory lock) so `canLogin` cannot race the
+ * check.
+ */
+export async function assertMappableOwnerContact(
+  tx: Prisma.TransactionClient,
+  ownerContactMemberId: string
+): Promise<string> {
+  const contact = await tx.member.findUnique({
+    where: { id: ownerContactMemberId },
+    select: { id: true, canLogin: true, role: true, archivedAt: true, active: true },
+  });
+  if (!contact) {
+    throw new BookingRequestError("The selected contact could not be found", 404);
+  }
+  // GUARD: never attach a booking request to a member that can sign in.
+  if (contact.canLogin) {
+    throw new BookingRequestError(
+      "That member can sign in, so it can't be used as a booking-request contact. Pick an Organisation/School contact or create a new one.",
+      422
+    );
+  }
+  if (
+    contact.role !== Role.NON_MEMBER &&
+    contact.role !== Role.SCHOOL
+  ) {
+    throw new BookingRequestError(
+      "Only Organisation/School booking contacts can be mapped to a request",
+      422
+    );
+  }
+  // Align with the suggestion endpoint's scope: an archived or deactivated
+  // contact must not be reused.
+  if (contact.archivedAt) {
+    throw new BookingRequestError(
+      "That contact has been archived and can't be reused",
+      422
+    );
+  }
+  if (!contact.active) {
+    throw new BookingRequestError(
+      "That contact is inactive and can't be reused",
+      422
+    );
+  }
+  return contact.id;
+}
+
+// ---------------------------------------------------------------------------
 // Approval conversion
 // ---------------------------------------------------------------------------
 
@@ -673,6 +739,15 @@ export async function reassignHeldBookingGuests(
 export async function approveBookingRequest(input: {
   requestId: string;
   adminMemberId: string;
+  /**
+   * Optional existing non-login contact to own the converted booking (issue
+   * #1255). When set, the booking is attached to this contact instead of
+   * creating a new NON_MEMBER member — reusing its Xero contact downstream. Only
+   * honoured when the owner has not already been materialised by a capacity hold
+   * (a held booking's owner was fixed at hold time; release + re-hold to change
+   * it). Ignored on the held-booking reuse path.
+   */
+  ownerContactMemberId?: string | null;
 }): Promise<ApproveBookingRequestOutcome> {
   const request = await prisma.bookingRequest.findUnique({
     where: { id: input.requestId },
@@ -861,24 +936,36 @@ export async function approveBookingRequest(input: {
           throw new Error("CAPACITY_EXCEEDED_SENTINEL");
         }
 
-        // Mirror approveMemberApplication(): a non-login member owns the
-        // booking. emailVerified is true because the address was verified in
-        // the request flow before it entered the queue.
-        member = await tx.member.create({
-          data: {
-            email: request.contactEmail,
-            passwordHash: placeholderPasswordHash,
-            emailVerified: true,
-            firstName: request.contactFirstName,
-            lastName: request.contactLastName,
-            role: "NON_MEMBER",
-            ageTier: AgeTier.ADULT,
-            active: true,
-            canLogin: false,
-            phoneNumber: request.contactPhone,
-          },
-          select: { id: true },
-        });
+        if (input.ownerContactMemberId) {
+          // Admin mapped this request to an existing non-login Organisation/
+          // School contact (issue #1255): attach the booking to it instead of
+          // minting a duplicate member (and, downstream, a duplicate Xero
+          // contact). The guard rejects any login-capable target.
+          const mappedId = await assertMappableOwnerContact(
+            tx,
+            input.ownerContactMemberId
+          );
+          member = { id: mappedId };
+        } else {
+          // Mirror approveMemberApplication(): a non-login member owns the
+          // booking. emailVerified is true because the address was verified in
+          // the request flow before it entered the queue.
+          member = await tx.member.create({
+            data: {
+              email: request.contactEmail,
+              passwordHash: placeholderPasswordHash,
+              emailVerified: true,
+              firstName: request.contactFirstName,
+              lastName: request.contactLastName,
+              role: "NON_MEMBER",
+              ageTier: AgeTier.ADULT,
+              active: true,
+              canLogin: false,
+              phoneNumber: request.contactPhone,
+            },
+            select: { id: true },
+          });
+        }
 
         booking = await tx.booking.create({
           data: {

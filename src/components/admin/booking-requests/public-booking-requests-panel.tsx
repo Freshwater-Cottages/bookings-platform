@@ -21,6 +21,10 @@ import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
 import { formatNZDate, formatNZDateTime } from "@/lib/nzst-date";
 import { formatCents } from "@/lib/utils";
 import { SCHOOL_GROUP_SOFT_CAP } from "@/lib/school-booking-constants";
+import {
+  BookingRequestContactPicker,
+  type OwnerContactChoice,
+} from "@/components/admin/booking-requests/booking-request-contact-picker";
 
 // Bulk child tiers a school group is counted in. Teachers/parent helpers are
 // ADULT and are not adjusted here.
@@ -265,7 +269,32 @@ export function PublicBookingRequestsPanel({
     Record<string, Record<SchoolChildTier, string>>
   >({});
   const [declineReasons, setDeclineReasons] = useState<Record<string, string>>({});
+  // Per-request owner-contact decision (issue #1255): default is to create a new
+  // non-login contact; the admin may instead map to an existing one.
+  const [ownerChoices, setOwnerChoices] = useState<Record<string, OwnerContactChoice>>({});
   const [error, setError] = useState("");
+
+  function ownerChoiceFor(requestId: string): OwnerContactChoice {
+    return ownerChoices[requestId] ?? { mode: "create" };
+  }
+
+  // The mapped contact id to send to hold/approve, or undefined for create-new.
+  // A held booking's owner is already fixed, so the decision is only threaded
+  // while the owner has not yet been materialised.
+  function mappedOwnerContactId(request: PublicBookingRequestData): string | undefined {
+    if (request.heldBookingId) return undefined;
+    const choice = ownerChoiceFor(request.id);
+    return choice.mode === "map" && choice.memberId ? choice.memberId : undefined;
+  }
+
+  // True when the admin picked "map to existing" but has not yet chosen a
+  // contact — block the action so the decision is not silently lost to a new
+  // contact. Never applies once the owner is fixed by a hold.
+  function ownerChoiceNeedsContact(request: PublicBookingRequestData): boolean {
+    if (request.heldBookingId) return false;
+    const choice = ownerChoiceFor(request.id);
+    return choice.mode === "map" && !choice.memberId;
+  }
   const currentPath = buildPublicRequestsPath(basePath, fixedSearchParams, filter, requestId);
 
   useEffect(() => {
@@ -444,11 +473,26 @@ export function PublicBookingRequestsPanel({
   }
 
   async function handleSendQuote(request: PublicBookingRequestData) {
+    if (ownerChoiceNeedsContact(request)) {
+      setError(
+        "Choose an existing contact to map to, or switch to 'Create a new contact'."
+      );
+      return;
+    }
     setActioningId(request.id);
     setError("");
     try {
+      // Sending a quote auto-holds capacity, which materialises the owner
+      // contact, so the map-to-existing decision (issue #1255) must ride along.
+      const ownerContactMemberId = mappedOwnerContactId(request);
       const response = await fetch(`/api/admin/booking-requests/${request.id}/send-quote`, {
         method: "POST",
+        ...(ownerContactMemberId
+          ? {
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ ownerContactMemberId }),
+            }
+          : {}),
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
@@ -493,6 +537,12 @@ export function PublicBookingRequestsPanel({
   }
 
   async function handleHoldSlots(request: PublicBookingRequestData) {
+    if (ownerChoiceNeedsContact(request)) {
+      setError(
+        "Choose an existing contact to map to, or switch to 'Create a new contact'."
+      );
+      return;
+    }
     setActioningId(request.id);
     setError("");
     try {
@@ -501,6 +551,7 @@ export function PublicBookingRequestsPanel({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           optionId: request.latestQuote?.options[0]?.id,
+          ownerContactMemberId: mappedOwnerContactId(request),
         }),
       });
       const data = await response.json().catch(() => ({}));
@@ -569,25 +620,40 @@ export function PublicBookingRequestsPanel({
   }
 
   async function handleApprove(request: PublicBookingRequestData) {
+    if (ownerChoiceNeedsContact(request)) {
+      setError(
+        "Choose an existing contact to map to, or switch to 'Create a new contact'."
+      );
+      return;
+    }
     setActioningId(request.id);
     setError("");
     try {
       // Only send a quantity override when the admin actually edited the school
-      // group's child counts; otherwise approve with the submitted numbers.
+      // group's child counts; otherwise approve with the submitted numbers. The
+      // map-to-existing-contact decision (issue #1255) rides along in the same
+      // body when the admin chose one and the owner is not already held.
       const hasCountOverride = request.type === "SCHOOL" && request.id in countInputs;
       const counts = childCountValues(request);
+      const ownerContactMemberId = mappedOwnerContactId(request);
+      const payload: Record<string, unknown> = {};
+      if (hasCountOverride) {
+        payload.childCounts = {
+          INFANT: parseCount(counts.INFANT),
+          CHILD: parseCount(counts.CHILD),
+          YOUTH: parseCount(counts.YOUTH),
+        };
+      }
+      if (ownerContactMemberId) {
+        payload.ownerContactMemberId = ownerContactMemberId;
+      }
+      const hasBody = Object.keys(payload).length > 0;
       const response = await fetch(`/api/admin/booking-requests/${request.id}/approve`, {
         method: "POST",
-        ...(hasCountOverride
+        ...(hasBody
           ? {
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                childCounts: {
-                  INFANT: parseCount(counts.INFANT),
-                  CHILD: parseCount(counts.CHILD),
-                  YOUTH: parseCount(counts.YOUTH),
-                },
-              }),
+              body: JSON.stringify(payload),
             }
           : {}),
       });
@@ -827,6 +893,24 @@ export function PublicBookingRequestsPanel({
                     "MODIFICATION_REQUESTED",
                   ].includes(request.status) ? (
                     <div className="space-y-3 rounded-md border border-slate-200 p-3">
+                      {request.heldBookingId ? (
+                        <div className="rounded-md border bg-muted/40 p-3 text-sm text-muted-foreground">
+                          Booking contact was set when slots were held. Release
+                          the hold to change which contact owns this booking.
+                        </div>
+                      ) : (
+                        <BookingRequestContactPicker
+                          requestId={request.id}
+                          choice={ownerChoiceFor(request.id)}
+                          onChange={(choice) =>
+                            setOwnerChoices((prev) => ({
+                              ...prev,
+                              [request.id]: choice,
+                            }))
+                          }
+                          disabled={isActioning}
+                        />
+                      )}
                       {request.type === "SCHOOL" ? (
                         <div className="space-y-2">
                           <Label>Adjust group numbers</Label>

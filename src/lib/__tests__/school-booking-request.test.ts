@@ -15,7 +15,7 @@ vi.mock("@/lib/prisma", () => ({
       updateMany: vi.fn(),
       update: vi.fn(),
     },
-    member: { create: vi.fn() },
+    member: { create: vi.fn(), findUnique: vi.fn() },
     booking: { create: vi.fn() },
     payment: { create: vi.fn() },
     hutLeaderAssignment: { create: vi.fn() },
@@ -428,6 +428,65 @@ describe("approveSchoolBookingRequest", () => {
       expect.objectContaining({ createdByMemberId: "admin-1" })
     );
     expect(mockedSendManualInvoice).not.toHaveBeenCalled();
+  });
+
+  it("maps the school owner to an existing non-login SCHOOL contact instead of creating one (#1255)", async () => {
+    mockedFindUnique.mockResolvedValue(schoolRequest() as never);
+    // The chosen contact is a valid non-login SCHOOL organisation contact.
+    vi.mocked(prisma.member.findUnique).mockResolvedValue({
+      id: "existing-school",
+      canLogin: false,
+      role: "SCHOOL",
+      archivedAt: null,
+      active: true,
+    } as never);
+    // On the map path member.create is only called for the teacher(s).
+    vi.mocked(prisma.member.create).mockResolvedValue({
+      id: "teacher-member",
+      firstName: "Tana",
+      email: "tana@school.test",
+    } as never);
+
+    const result = await approveSchoolBookingRequest({
+      requestId: "req-school",
+      adminMemberId: "admin-1",
+      ownerContactMemberId: "existing-school",
+    });
+
+    expect(result).toMatchObject({
+      type: "approved",
+      schoolMemberId: "existing-school",
+      invoiceMode: "xero",
+      teacherCount: 1,
+    });
+    // The booking is owned by the mapped contact, reusing its Xero contact.
+    const bookingArgs = vi.mocked(prisma.booking.create).mock.calls[0][0]
+      .data as Record<string, unknown>;
+    expect(bookingArgs.memberId).toBe("existing-school");
+    // member.create ran ONLY for the teacher, never for the school owner.
+    expect(prisma.member.create).toHaveBeenCalledTimes(1);
+    const onlyMemberArgs = vi.mocked(prisma.member.create).mock.calls[0][0]
+      .data as Record<string, unknown>;
+    expect(onlyMemberArgs.firstName).toBe("Tana");
+  });
+
+  it("rejects mapping a school request onto a login-capable member (#1255 guard)", async () => {
+    mockedFindUnique.mockResolvedValue(schoolRequest() as never);
+    vi.mocked(prisma.member.findUnique).mockResolvedValue({
+      id: "real-member",
+      canLogin: true,
+      role: "USER",
+      archivedAt: null,
+    } as never);
+
+    await expect(
+      approveSchoolBookingRequest({
+        requestId: "req-school",
+        adminMemberId: "admin-1",
+        ownerContactMemberId: "real-member",
+      })
+    ).rejects.toMatchObject({ status: 422 });
+    expect(prisma.booking.create).not.toHaveBeenCalled();
   });
 
   it("is idempotent on a re-armed convertedBookingId: a replayed accept returns the existing booking and raises no second Xero invoice or PIN (#1232)", async () => {

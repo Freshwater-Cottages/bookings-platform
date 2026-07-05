@@ -39,6 +39,7 @@ import { isEffectiveModuleEnabled } from "@/lib/admin-modules";
 import { issueActionToken } from "@/lib/action-tokens";
 import { logAudit } from "@/lib/audit";
 import {
+  assertMappableOwnerContact,
   BOOKING_REQUEST_VERIFICATION_TTL_MS,
   BookingRequestError,
   linkedGuestMemberMap,
@@ -403,6 +404,16 @@ export async function approveSchoolBookingRequest(input: {
    * against the new list. Leave unset to use the submitted guest list as-is.
    */
   guestOverride?: { childCounts: SchoolChildCounts };
+  /**
+   * Optional existing non-login contact to own the confirmed booking and be the
+   * invoiced Xero party (issue #1255). When set, the school booking is attached
+   * to this contact instead of creating a new SCHOOL member — reusing its Xero
+   * contact so a repeat school does not spawn a duplicate. Per-teacher records
+   * are always created fresh (each needs its own HutLeaderAssignment + PIN).
+   * Only honoured when the owner has not already been materialised by a capacity
+   * hold; ignored on the held-booking reuse path.
+   */
+  ownerContactMemberId?: string | null;
 }): Promise<ApproveSchoolBookingRequestOutcome> {
   const request = await prisma.bookingRequest.findUnique({
     where: { id: input.requestId },
@@ -648,23 +659,37 @@ export async function approveSchoolBookingRequest(input: {
           throw new Error("CAPACITY_EXCEEDED_SENTINEL");
         }
 
-        // The school is the invoiced party and Xero contact: name = school,
-        // email = contact email. Owned by a non-login Member (canLogin: false).
-        schoolMember = await tx.member.create({
-          data: {
-            email: request.contactEmail,
-            passwordHash: placeholderPasswordHash,
-            emailVerified: true,
-            firstName: schoolName.slice(0, 100),
-            lastName: "",
-            role: "SCHOOL",
-            ageTier: AgeTier.ADULT,
-            active: true,
-            canLogin: false,
-            phoneNumber: request.contactPhone,
-          },
-          select: { id: true },
-        });
+        if (input.ownerContactMemberId) {
+          // Admin mapped this school request to an existing non-login SCHOOL/
+          // Organisation contact (issue #1255): the confirmed booking — and the
+          // Xero invoice raised after commit — reuse that contact instead of
+          // spawning a duplicate school member (and Xero contact). Teachers are
+          // still created fresh below. The guard rejects any login-capable
+          // target.
+          const mappedId = await assertMappableOwnerContact(
+            tx,
+            input.ownerContactMemberId
+          );
+          schoolMember = { id: mappedId };
+        } else {
+          // The school is the invoiced party and Xero contact: name = school,
+          // email = contact email. Owned by a non-login Member (canLogin: false).
+          schoolMember = await tx.member.create({
+            data: {
+              email: request.contactEmail,
+              passwordHash: placeholderPasswordHash,
+              emailVerified: true,
+              firstName: schoolName.slice(0, 100),
+              lastName: "",
+              role: "SCHOOL",
+              ageTier: AgeTier.ADULT,
+              active: true,
+              canLogin: false,
+              phoneNumber: request.contactPhone,
+            },
+            select: { id: true },
+          });
+        }
 
         // CONFIRMED holds capacity (issue #709 locked decision); pay-on-account
         // via INTERNET_BANKING so the existing invoice/reconciliation path runs.

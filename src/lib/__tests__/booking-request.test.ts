@@ -16,6 +16,7 @@ vi.mock("@/lib/prisma", () => ({
     },
     member: {
       create: vi.fn(),
+      findUnique: vi.fn(),
     },
     booking: {
       create: vi.fn(),
@@ -614,6 +615,73 @@ describe("approveBookingRequest", () => {
     );
   });
 
+  it("maps to an existing non-login contact instead of creating a new member (#1255)", async () => {
+    mockedFindUnique.mockResolvedValue(
+      baseRequest({ status: BookingRequestStatus.PRICED, priceCents: 12000 }) as never
+    );
+    mockedUpdateMany.mockResolvedValue({ count: 1 } as never);
+    mockedCheckCapacity.mockResolvedValue({
+      available: true,
+      minAvailable: 5,
+      nightDetails: [],
+    } as never);
+    // The chosen contact is a valid non-login NON_MEMBER organisation contact.
+    vi.mocked(prisma.member.findUnique).mockResolvedValue({
+      id: "contact-9",
+      canLogin: false,
+      role: "NON_MEMBER",
+      archivedAt: null,
+      active: true,
+    } as never);
+    vi.mocked(prisma.booking.create).mockResolvedValue({ id: "booking-1" } as never);
+    vi.mocked(prisma.payment.create).mockResolvedValue({} as never);
+    vi.mocked(prisma.paymentLink.create).mockResolvedValue({} as never);
+    vi.mocked(prisma.bookingRequest.update).mockResolvedValue({} as never);
+
+    const result = await approveBookingRequest({
+      requestId: "req-1",
+      adminMemberId: "admin-1",
+      ownerContactMemberId: "contact-9",
+    });
+
+    expect(result).toMatchObject({
+      type: "approved",
+      memberId: "contact-9",
+      bookingId: "booking-1",
+    });
+    // No new member (and therefore no new Xero contact) is minted on the map path.
+    expect(prisma.member.create).not.toHaveBeenCalled();
+    const bookingArgs = vi.mocked(prisma.booking.create).mock.calls[0][0].data as Record<string, unknown>;
+    expect(bookingArgs.memberId).toBe("contact-9");
+  });
+
+  it("rejects mapping a request onto a login-capable member (#1255 guard)", async () => {
+    mockedFindUnique.mockResolvedValue(
+      baseRequest({ status: BookingRequestStatus.PRICED, priceCents: 12000 }) as never
+    );
+    mockedUpdateMany.mockResolvedValue({ count: 1 } as never);
+    mockedCheckCapacity.mockResolvedValue({
+      available: true,
+      minAvailable: 5,
+      nightDetails: [],
+    } as never);
+    vi.mocked(prisma.member.findUnique).mockResolvedValue({
+      id: "real-member",
+      canLogin: true,
+      role: "USER",
+      archivedAt: null,
+    } as never);
+
+    await expect(
+      approveBookingRequest({
+        requestId: "req-1",
+        adminMemberId: "admin-1",
+        ownerContactMemberId: "real-member",
+      })
+    ).rejects.toMatchObject({ status: 422 });
+    expect(prisma.booking.create).not.toHaveBeenCalled();
+  });
+
   it("is idempotent on a re-armed convertedBookingId: a replayed accept returns the existing booking and fires no second side effect (#1232)", async () => {
     // First accept: a clean PRICED request converts exactly once.
     mockedFindUnique.mockResolvedValue(
@@ -778,6 +846,44 @@ describe("approveBookingRequest", () => {
     expect(prisma.booking.update).toHaveBeenCalled();
     expect(prisma.member.create).not.toHaveBeenCalled();
     expect(prisma.booking.create).not.toHaveBeenCalled();
+  });
+
+  it("ignores ownerContactMemberId on a held request: the owner is fixed at hold time (#1255/#1280)", async () => {
+    // Once beds are held, the owner was already materialised (at hold/quote-send)
+    // and persisted on the held booking. Approval reuses held.memberId and must
+    // NOT re-run the map-or-create decision — passing a contact id here is a
+    // no-op, so the guard (member.findUnique) never fires and no member is minted.
+    mockedFindUnique.mockResolvedValue(
+      baseRequest({
+        status: BookingRequestStatus.PRICED,
+        priceCents: 12000,
+        heldBookingId: "held-1",
+      }) as never
+    );
+    mockedUpdateMany.mockResolvedValue({ count: 1 } as never);
+    vi.mocked(prisma.booking.findUnique).mockResolvedValue({
+      id: "held-1",
+      memberId: "held-member",
+      status: BookingStatus.AWAITING_REVIEW,
+    } as never);
+    vi.mocked(prisma.bookingGuest.findMany).mockResolvedValue([{ id: "g1" }] as never);
+    vi.mocked(prisma.bookingGuest.update).mockResolvedValue({} as never);
+    vi.mocked(prisma.booking.update).mockResolvedValue({ id: "held-1" } as never);
+    vi.mocked(prisma.payment.create).mockResolvedValue({} as never);
+    vi.mocked(prisma.paymentLink.create).mockResolvedValue({} as never);
+    vi.mocked(prisma.bookingRequest.update).mockResolvedValue({} as never);
+
+    const result = await approveBookingRequest({
+      requestId: "req-1",
+      adminMemberId: "admin-1",
+      ownerContactMemberId: "some-other-contact",
+    });
+
+    // Owner stays the held booking's owner, not the passed contact.
+    expect(result).toMatchObject({ type: "approved", memberId: "held-member" });
+    // The guard is only reached on the create/map path — never on the held path.
+    expect(prisma.member.findUnique).not.toHaveBeenCalled();
+    expect(prisma.member.create).not.toHaveBeenCalled();
   });
 });
 

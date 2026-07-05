@@ -239,6 +239,14 @@ arrives, the school contact confirms who is attending (#1101): a tokenized
 public page (hash-stored, rotated per reminder email) applies identity-only
 name updates through the same price-preserving machinery as quoted-booking
 edits, and the explicit confirmation is stored on the booking request.
+The booking's owning contact is an admin decision taken where the owner is
+first materialised — a capacity hold, or approval when no hold exists (#1255):
+the admin either creates a new non-login `NON_MEMBER`/`SCHOOL` contact or maps
+the request onto an existing non-login `NON_MEMBER`/`SCHOOL` contact, and
+mapping reuses that contact's Xero contact instead of spawning a duplicate. A
+booking request is never mapped onto a `canLogin:true` member, a held request's
+owner stays fixed until the hold is released, and per-teacher hut-leader records
+are always created fresh.
 Headcount or tier changes still go through the admin re-quote flow, and
 unconfirmed lists inside the prompt window surface on the stuck-state
 dashboard. Standard edit paths (batch
