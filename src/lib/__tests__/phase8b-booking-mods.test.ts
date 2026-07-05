@@ -81,6 +81,11 @@ vi.mock("@/lib/cancellation", () => ({
   daysUntilDate: vi.fn(),
   loadCancellationPolicy: vi.fn(),
   getNonMemberHoldDays: vi.fn(),
+  getNonMemberHoldPolicy: vi.fn().mockResolvedValue({
+    enabled: true,
+    holdDays: 7,
+    source: "default",
+  }),
   calculateDualRefundAmounts: vi.fn(),
 }));
 vi.mock("@/lib/promo", () => ({
@@ -139,6 +144,7 @@ import {
   daysUntilDate,
   loadCancellationPolicy,
   getNonMemberHoldDays,
+  getNonMemberHoldPolicy,
   calculateDualRefundAmounts,
 } from "@/lib/cancellation";
 import { validateAndCalculatePromoDiscount, validatePromoCodeRules } from "@/lib/promo";
@@ -156,6 +162,7 @@ const mockedLoadPolicy = vi.mocked(loadCancellationPolicy);
 const mockedCalcDualRefund = vi.mocked(calculateDualRefundAmounts);
 const mockedProcessRefund = vi.mocked(processRefund);
 const mockedGetHoldDays = vi.mocked(getNonMemberHoldDays);
+const mockedGetHoldPolicy = vi.mocked(getNonMemberHoldPolicy);
 const mockedValidatePromo = vi.mocked(validatePromoCodeRules);
 const mockedValidateAndCalculatePromo = vi.mocked(validateAndCalculatePromoDiscount);
 
@@ -2234,6 +2241,48 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
 
     const updateData = tx.booking.update.mock.calls.at(-1)?.[0]?.data;
     expect(updateData.hasNonMembers).toBe(false);
+    expect(updateData.nonMemberHoldUntil).toBeNull();
+  });
+
+  it("clears a stale non-member hold when the policy is disabled and non-members remain", async () => {
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
+    mockedGetHoldPolicy.mockResolvedValueOnce({
+      enabled: false,
+      holdDays: 7,
+      source: "default",
+    });
+    const booking = makeBooking({
+      status: "PENDING",
+      checkIn: new Date("2026-08-10"),
+      checkOut: new Date("2026-08-12"),
+      hasNonMembers: true,
+      nonMemberHoldUntil: new Date("2026-08-03"),
+      payment: null,
+      guests: [
+        { id: "g1", bookingId: "bk1", firstName: "Alice", lastName: "Smith", ageTier: "ADULT", isMember: true, memberId: "m1", priceCents: 5000 },
+        { id: "g2", bookingId: "bk1", firstName: "Bob", lastName: "Smith", ageTier: "ADULT", isMember: false, memberId: null, priceCents: 7000 },
+        { id: "g3", bookingId: "bk1", firstName: "Cara", lastName: "Jones", ageTier: "ADULT", isMember: false, memberId: null, priceCents: 7000 },
+      ],
+    });
+    const tx = makeTx(booking);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    mockedCalcPrice.mockReturnValue({
+      totalPriceCents: 24000,
+      guests: [
+        { priceCents: 10000, perNightCents: [5000, 5000], nightDates: [] },
+        { priceCents: 14000, perNightCents: [7000, 7000], nightDates: [] },
+      ],
+    } as any);
+
+    const res = await DELETE(
+      new NextRequest("http://localhost/api/bookings/bk1/guests/g2", { method: "DELETE" }),
+      { params: Promise.resolve({ id: "bk1", guestId: "g2" }) },
+    );
+    expect(res.status).toBe(200);
+
+    const updateData = tx.booking.update.mock.calls.at(-1)?.[0]?.data;
+    expect(updateData.hasNonMembers).toBe(true);
+    expect(updateData.status).toBe("PAYMENT_PENDING");
     expect(updateData.nonMemberHoldUntil).toBeNull();
   });
 
