@@ -47,9 +47,11 @@ npm run test:e2e                       # prepare stack + run suite
 1. Starts the staging compose Postgres (host port `STAGING_POSTGRES_PORT`,
    default 5433 — **never** the production 5432).
 2. Drops and recreates the `public` schema, then runs `prisma migrate deploy`,
-   the base seed, and the demo seed, so every run starts from a known state.
-   It then enables the modules the E2E journeys need
-   (`e2e/setup/enable-e2e-modules.ts`) — a fresh database defaults these off:
+   the explicitly opted-in demo seed, and the create-if-missing base seed, so
+   every run starts from a known state without placing non-demo members in the
+   database before the destructive demo seed guard runs. It then enables the
+   modules the E2E journeys need (`e2e/setup/enable-e2e-modules.ts`) — a fresh
+   database defaults these off:
    `twoFactor` (two-factor enforcement), `waitlist` (`/admin/waitlist`,
    force-confirm, waitlist-confirm), `kiosk` + `chores` (`/lodge/*` and the
    roster, for the LODGE role boundary), `financeDashboard` (`/finance`, for
@@ -110,7 +112,8 @@ providers, and `scripts/e2e-stack.sh` refuses to run if it sees `sk_live`/
 ## Seeded fixtures and personas
 
 The demo seed (`prisma/demo-seed.ts`) writes deterministic E2E fixtures behind
-its localhost-only guard, shared with the specs through
+its explicit local demo-only guard (`ALLOW_DEMO_SEED=1`, non-production,
+local `DATABASE_URL`, and no non-demo member emails), shared with the specs through
 `e2e/helpers/fixtures.ts` so seed data and assertions never drift:
 
 - **Scoped-role personas** — one member per bundled access role

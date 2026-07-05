@@ -15,12 +15,14 @@
 // them. The base first-run seed data (seasons, rates, policies, admin/lodge
 // accounts, page content, induction template, club theme) is preserved.
 //
-// SAFETY GUARD: refuses to run unless DATABASE_URL points at localhost.
+// SAFETY GUARD: refuses unless explicitly opted in, non-production, local,
+// and connected to an empty or demo-only Member table.
 // ---------------------------------------------------------------------------
 import { createHash } from "node:crypto";
 import { type AgeTier, PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import { ensureAccessRoleDefinitions } from "../src/lib/access-role-definitions";
+import { assertDemoSeedMayRun, DEMO_SEED_DOMAIN } from "../src/lib/demo-seed-guard";
 import {
   ensureMemberAccessRoles,
   ensureMemberAccessRolesFromCompatibilityFields,
@@ -48,7 +50,7 @@ import {
 
 const prisma = new PrismaClient({ adapter: createPrismaPgAdapter() });
 
-const DEMO_DOMAIN = "demo.alpineclub.test";
+const DEMO_DOMAIN = DEMO_SEED_DOMAIN;
 const DEMO_PASSWORD = process.env.DEMO_SEED_PASSWORD ?? "demo1234";
 const PWHASH = bcrypt.hashSync(DEMO_PASSWORD, 12);
 const SEASON_YEAR = 2026;
@@ -69,23 +71,20 @@ function nightsBetween(checkIn: string, checkOut: string): string[] {
   return out;
 }
 
-function assertLocalDatabase() {
-  const url = process.env.DATABASE_URL ?? "";
-  let hostname = "";
-
-  try {
-    hostname = new URL(url).hostname;
-  } catch {
-    throw new Error(
-      "Refusing to run demo seed: DATABASE_URL is missing or invalid. " +
-        "Point DATABASE_URL at a local PostgreSQL database first.",
-    );
-  }
-
-  const isLocal = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname === "[::1]";
-  if (!isLocal) {
-    throw new Error(`Refusing to run demo seed: DATABASE_URL host is not local (${hostname || "unknown"}).`);
-  }
+async function assertDemoSeedSafety() {
+  await assertDemoSeedMayRun({
+    env: process.env,
+    countNonDemoMembers: () =>
+      prisma.member.count({
+        where: {
+          NOT: {
+            email: {
+              endsWith: `@${DEMO_DOMAIN}`,
+            },
+          },
+        },
+      }),
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -228,7 +227,7 @@ async function addGuest(
 }
 
 async function main() {
-  assertLocalDatabase();
+  await assertDemoSeedSafety();
   await cleanup();
   console.log("Building demo data...");
 
@@ -750,7 +749,7 @@ async function main() {
   // -------------------------------------------------------------------------
   // E2E fixtures (Playwright suite; see e2e/helpers/fixtures.ts). Deterministic
   // personas + bookings + a membership application the browser specs drive.
-  // Guarded by the same localhost-only check as the rest of this seed.
+  // Guarded by the same explicit local demo-only checks as the rest of this seed.
   // -------------------------------------------------------------------------
   // Scoped access-role personas: one bundled role each (plus baseline USER) so
   // the admin-permission matrix (src/lib/admin-permissions.ts) governs access.
