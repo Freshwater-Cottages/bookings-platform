@@ -74,16 +74,24 @@ profile page) split into two groups by design (#1285):
   gates them. The profile UI lists them as informational "Always sent" rows with
   no on/off switch — a switch there would promise control that is never honored
   and could hide a cancellation or refund from the person affected.
-- **Optional (honored on the send path via `shouldSendEmail`):** check-in
-  reminders (`bookingReminder`, gated in `cron-checkin-reminders.ts`) and chore
-  rosters (`choreRoster`, gated in `sendChoreRosterEmail`). A member who switches
-  either off does not receive that mail. A non-member guest has no preference
-  record, so their chore roster is always sent. Club Communications
-  (`marketingEmails`) is honored separately by the bulk-send recipient filter.
+- **Optional (honored before the send path):** check-in reminders
+  (`bookingReminder`, gated in `cron-checkin-reminders.ts` via `shouldSendEmail`)
+  and chore rosters (`choreRoster`, gated in `admin-roster-service.ts` via
+  `shouldSendChoreRoster`, before the chore token is created). A member who
+  switches either off does not receive that mail. For chore rosters the
+  preference is resolved with an **Option C hybrid** (#1285): the guest's own
+  `NotificationPreference` row wins when it exists; otherwise, if the guest
+  inherits their email from a primary member (`inheritEmailFromId`), the
+  primary's preference governs (the roster lands in the primary's inbox, so a
+  dependent follows the parent's opt-out); if neither has a row — including a
+  non-member guest with no member record — the roster is sent (documented
+  "no preference → send"). Club Communications (`marketingEmails`) is honored
+  separately by the bulk-send recipient filter.
 
 `shouldSendEmail` (`src/lib/email/core.ts`) is the canonical gate for the
-optional member categories; it is never applied to the must-send transactional
-senders.
+optional member categories, with `shouldSendChoreRoster` (same file) layering
+the dependent/inheritance resolution on top for chore rosters; neither is ever
+applied to the must-send transactional senders.
 
 Failed non-sensitive emails with retained HTML are retried every 30 minutes,
 with a 15 minute backoff and at most 3 attempts. Token-bearing templates are not
@@ -686,8 +694,8 @@ Triggers and frequency:
 
 - Admin roster route email action for a lodge date.
 - Sends one email per guest with an email address and assigned chores.
-- The route deletes old guest chore tokens for that guest/date before creating a new 48-hour token.
-- Honors the guest member's `choreRoster` preference (#1285): skipped if that member has switched Chore Roster off. Non-member guests have no preference and are always sent.
+- For each guest that will be emailed, the route deletes old guest chore tokens for that guest/date before creating a new 48-hour token.
+- Honors the `choreRoster` preference via the Option C hybrid resolver (#1285), evaluated in `admin-roster-service.ts` **before** the token is created so an opted-out recipient leaves no orphaned token: the guest's own preference wins, else the inheriting primary's (`inheritEmailFromId`), else send. Suppressed guests are reported in the response `skipped` count. Non-member guests have no preference and are always sent.
 
 ### hut-leader-assignment
 
