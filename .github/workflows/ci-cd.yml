@@ -1,0 +1,355 @@
+name: CI (ci-cd)
+
+# Residual risk accepted for the `npm audit --audit-level=high` gate:
+# - `next-auth@5.0.0-beta.31` / `@auth/core@0.41.2` still declare an optional
+#   `nodemailer@^7.0.7` peer while this repo validates `nodemailer@8.0.6`.
+# - `.npmrc` pins `legacy-peer-deps=true` until Auth.js expands that optional
+#   peer range. See `docs/MAINTENANCE.md` for the public maintenance baseline.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - ci-cd
+  push:
+    branches:
+      - ci-cd
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dependency-review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Audit dependency graph
+        run: npm audit --audit-level=high --package-lock-only
+
+  static-analysis:
+    name: Static analysis gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      SEMGREP_IMAGE: semgrep/semgrep:1.161.0
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Run Semgrep static analysis
+        run: |
+          mkdir -p "$RUNNER_TEMP/semgrep-output"
+          docker run --rm \
+            -v "$PWD:/src:ro" \
+            -v "$RUNNER_TEMP/semgrep-output:/out" \
+            -w /src \
+            "${SEMGREP_IMAGE}" \
+            semgrep scan \
+              --config p/nextjs \
+              --config p/typescript \
+              --config p/javascript \
+              --config p/react \
+              --error \
+              --metrics=off \
+              --exclude node_modules \
+              --exclude .next \
+              --sarif-output /out/semgrep-results.sarif
+
+      - name: Upload Semgrep SARIF artifact
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: semgrep-sarif-${{ github.run_id }}
+          path: ${{ runner.temp }}/semgrep-output/semgrep-results.sarif
+          if-no-files-found: ignore
+
+  # gitleaks-full-repo:
+  #   runs-on: ubuntu-latest
+  #   timeout-minutes: 30
+  #   permissions:
+  #     contents: read
+  #     pull-requests: read
+  #   steps:
+  #     - name: Check out repository
+  #       uses: actions/checkout@v7
+  #       with:
+  #         fetch-depth: 0
+  #
+  #     - name: Scan repository history with gitleaks
+  #       uses: gitleaks/gitleaks-action@v3
+  #       env:
+  #         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  #         GITLEAKS_ENABLE_COMMENTS: "false"
+  #         GITLEAKS_ENABLE_SUMMARY: "true"
+  #
+  # gitleaks-pr-diff:
+  #   if: github.event_name == 'pull_request'
+  #   runs-on: ubuntu-latest
+  #   timeout-minutes: 30
+  #   permissions:
+  #     contents: read
+  #   steps:
+  #     - name: Check out repository
+  #       uses: actions/checkout@v7
+  #       with:
+  #         fetch-depth: 0
+  #
+  #     - name: Scan pull request commit range with gitleaks
+  #       run: |
+  #         docker run --rm \
+  #           -v "$PWD:/repo:ro" \
+  #           ghcr.io/gitleaks/gitleaks:v8.28.0 \
+  #           git /repo \
+  #           --log-opts="${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}" \
+  #           --exit-code=1 \
+  #           --redact
+
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      AUTH_SECRET: ci-auth-secret
+      NEXTAUTH_SECRET: ci-auth-secret
+      NEXTAUTH_URL: http://localhost:3000
+      AUTH_TRUST_HOST: "false"
+      CRON_SECRET: ci-cron-secret
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/tacbookings
+      STRIPE_SECRET_KEY: sk_test_fake
+      NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: pk_test_fake
+      NEXT_PUBLIC_CONTACT_EMAIL: bookings@example.com
+      XERO_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH: "false"
+      XERO_ENABLE_LIVE_MEMBER_GROUP_LOOKUPS: "false"
+      XERO_ENABLE_AUTOLOAD_XERO_CONTACT_GROUPS: "false"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Audit dependencies
+        run: npm audit --audit-level=high
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Generate Prisma client
+        run: npm run db:generate
+
+      # Fails fast on type errors (app + test projects) before the slower
+      # test suite and next build steps.
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+  migration-drift:
+    name: Migration drift check
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: drift_main
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/drift_main
+      # Prisma replays prisma/migrations into this shadow database to derive the
+      # migration-history schema, then diffs it against schema.prisma. It must
+      # already exist (Prisma 7 does not auto-create an explicit shadow DB).
+      SHADOW_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/drift_shadow
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Create shadow database
+        run: psql "$DATABASE_URL" -c "CREATE DATABASE drift_shadow"
+
+      - name: Generate Prisma client
+        run: npm run db:generate
+
+      # Fails (exit 2) if the committed migrations do not reproduce
+      # schema.prisma — the parity gate enforced at deploy time. See issue #760.
+      - name: Check migrations reproduce schema.prisma
+        run: npm run db:check-drift
+
+  docker-image-security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    needs:
+      - verify
+    permissions:
+      contents: read
+    env:
+      NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: pk_test_fake
+      NEXT_PUBLIC_CONTACT_EMAIL: bookings@example.com
+      NEXT_PUBLIC_SENTRY_DSN: ""
+      IMAGE_REF: tacbookings-ci:${{ github.sha }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Build Docker image
+        run: |
+          docker build \
+            --build-arg NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY="${NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY}" \
+            --build-arg NEXT_PUBLIC_SENTRY_DSN="${NEXT_PUBLIC_SENTRY_DSN}" \
+            --build-arg NEXT_PUBLIC_CONTACT_EMAIL="${NEXT_PUBLIC_CONTACT_EMAIL}" \
+            --tag "${IMAGE_REF}" \
+            .
+
+      - name: Fail on CRITICAL image vulnerabilities
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE_REF }}
+          format: table
+          exit-code: "1"
+          severity: CRITICAL
+
+      - name: Warn on HIGH image vulnerabilities
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE_REF }}
+          format: table
+          exit-code: "1"
+          severity: HIGH
+          skip-setup-trivy: true
+
+  publish-ghcr-images:
+    name: Publish GHCR images
+    if: github.event_name == 'push' && github.ref == 'refs/heads/ci-cd'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    needs:
+      - verify
+      - migration-drift
+      - static-analysis
+      # - gitleaks-full-repo
+      - docker-image-security
+    permissions:
+      contents: read
+      packages: write
+    env:
+      APP_IMAGE: ${{ vars.GHCR_APP_IMAGE_REPOSITORY || format('ghcr.io/{0}/alpineclubbookingsnz-app', github.repository_owner) }}:${{ github.sha }}
+      MIGRATE_IMAGE: ${{ vars.GHCR_MIGRATE_IMAGE_REPOSITORY || format('ghcr.io/{0}/alpineclubbookingsnz-migrate', github.repository_owner) }}:${{ github.sha }}
+      NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: ${{ vars.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY }}
+      NEXT_PUBLIC_CONTACT_EMAIL: ${{ vars.NEXT_PUBLIC_CONTACT_EMAIL }}
+      NEXT_PUBLIC_SENTRY_DSN: ${{ vars.NEXT_PUBLIC_SENTRY_DSN }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Validate production build variables
+        run: |
+          test -n "$NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY"
+          test -n "$NEXT_PUBLIC_CONTACT_EMAIL"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build and push app image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ env.APP_IMAGE }}
+          build-args: |
+            NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=${{ env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY }}
+            NEXT_PUBLIC_CONTACT_EMAIL=${{ env.NEXT_PUBLIC_CONTACT_EMAIL }}
+            NEXT_PUBLIC_SENTRY_DSN=${{ env.NEXT_PUBLIC_SENTRY_DSN }}
+          cache-from: type=gha,scope=alpineclubbookingsnz-app
+          cache-to: type=gha,mode=max,scope=alpineclubbookingsnz-app
+
+      - name: Build and push migrate image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile
+          target: builder
+          push: true
+          tags: ${{ env.MIGRATE_IMAGE }}
+          build-args: |
+            NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=${{ env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY }}
+            NEXT_PUBLIC_CONTACT_EMAIL=${{ env.NEXT_PUBLIC_CONTACT_EMAIL }}
+            NEXT_PUBLIC_SENTRY_DSN=${{ env.NEXT_PUBLIC_SENTRY_DSN }}
+          cache-from: type=gha,scope=alpineclubbookingsnz-migrate
+          cache-to: type=gha,mode=max,scope=alpineclubbookingsnz-migrate
+
+  trigger-infra-deploy:
+    name: Trigger infrastructure deploy
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    needs:
+      - publish-ghcr-images
+    permissions:
+      contents: read
+    env:
+      APP_REPO: ${{ vars.GHCR_APP_IMAGE_REPOSITORY || format('ghcr.io/{0}/bookings-platform-app', github.repository_owner) }}
+      APP_TAG: ${{ github.sha }}
+    steps:
+      - name: Dispatch deploy-image event to fwc-infrastructure
+        env:
+          GH_TOKEN: ${{ secrets.INFRA_DISPATCH_TOKEN }}
+        run: |
+          gh api repos/Freshwater-Cottages/fwc-infrastructure/dispatches \
+            --method POST \
+            -f event_type=deploy-image \
+            -f "client_payload=$(jq -n --arg r "$APP_REPO" --arg t "$APP_TAG" \
+              '{app_image_repository:$r,app_image_tag:$t}')"
