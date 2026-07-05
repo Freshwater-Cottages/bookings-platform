@@ -176,12 +176,15 @@ SEED_LODGE_PASSWORD=replace-with-a-local-kiosk-password \
 npm run dev
 ```
 
-For richer local-only demo data, run the destructive demo seed against a
-throwaway PostgreSQL database whose `DATABASE_URL` host is `localhost`,
-`127.0.0.1`, or `::1`:
+For richer local-only demo data, run the destructive demo seed only against a
+throwaway PostgreSQL database on a development machine. Never run it on a
+deployment host, including hosts where production PostgreSQL is reachable via
+`localhost`. The command requires an explicit opt-in, refuses
+`NODE_ENV=production`, refuses non-local `DATABASE_URL` hosts, and refuses to
+run when any existing `Member` email is outside `demo.alpineclub.test`:
 
 ```bash
-npm run db:seed:demo
+ALLOW_DEMO_SEED=1 npm run db:seed:demo
 ```
 
 The demo seed clears demo and transactional rows before rebuilding sample
