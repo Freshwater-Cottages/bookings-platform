@@ -8,30 +8,19 @@ import {
   CLUB_NAME,
 } from "@/config/club-identity";
 import { formatNZDate } from "../nzst-date";
-import logger from "@/lib/logger";
-import { sendEmail, shouldSendEmail } from "./core";
+import { sendEmail } from "./core";
 
+// #1285: the "Chore Roster" notification preference is honored by the caller
+// (`admin-roster-service.ts` via `shouldSendChoreRoster`), before a chore
+// token is created — mirroring how check-in reminders are gated in their cron
+// caller. This sender stays a pure transport so it never double-gates.
 export async function sendChoreRosterEmail(
   email: string,
   guestName: string,
   date: string,
   chores: Array<{ name: string; description: string | null }>,
   choreLink?: string,
-  memberId?: string | null,
 ) {
-  // #1285: honor the member's "Chore Roster" notification preference. Chore
-  // rosters are optional/operational — NOT must-send transactional mail — so a
-  // member who has switched this category off should not receive one. When the
-  // guest has no linked member record (a non-member guest), there is no
-  // preference to consult and the roster is always sent.
-  if (memberId && !(await shouldSendEmail(memberId, "choreRoster"))) {
-    logger.debug(
-      { memberId, date },
-      "Skipped chore roster email — member opted out of the choreRoster category",
-    );
-    return;
-  }
-
   const formattedDate = new Date(date + "T00:00:00").toLocaleDateString(
     "en-NZ",
     {

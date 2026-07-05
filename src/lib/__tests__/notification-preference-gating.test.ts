@@ -1,11 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-// #1285: sender-level gating tests. These prove that the OPTIONAL categories
-// (bookingReminder / choreRoster) are honored on the send path via the
-// canonical `shouldSendEmail` helper, while the MUST-SEND transactional
-// categories (bookingConfirmation / bookingBumped / bookingCancelled) always
-// send regardless of the member's stored preference. Mirrors the mock harness
-// of `phase6b-notifications.test.ts`.
+// #1285: preference-gating tests. These prove that the OPTIONAL categories are
+// honored before the send path. `bookingReminder` is gated in its cron caller
+// via the canonical `shouldSendEmail` helper; `choreRoster` is resolved via the
+// Option C hybrid `shouldSendChoreRoster` helper (guest's own row wins, else the
+// inheriting primary's row, else the documented "no preference → send" default).
+// The MUST-SEND transactional categories (bookingConfirmation / bookingBumped /
+// bookingCancelled) always send regardless of the member's stored preference.
+// Mirrors the mock harness of `phase6b-notifications.test.ts`.
 
 const { mockPrisma, mockTransporter } = vi.hoisted(() => {
   const mockTransporter = {
@@ -87,63 +89,97 @@ beforeEach(() => {
 });
 
 // ============================================================================
-// choreRoster — optional/operational, honored on the send path
+// choreRoster — optional/operational, resolved via the Option C hybrid helper
 // ============================================================================
 
-describe("#1285 chore roster honors the choreRoster preference", () => {
-  it("does NOT send when the member has choreRoster switched off", async () => {
+describe("#1285 shouldSendChoreRoster resolves the effective preference (Option C hybrid)", () => {
+  it("uses the guest's OWN preference row when present — opted out → suppress", async () => {
     mockPrisma.notificationPreference.findUnique.mockResolvedValue(
       prefRecord({ choreRoster: false }),
     );
 
-    const { sendChoreRosterEmail } = await import("../email");
-    await sendChoreRosterEmail(
-      "mia@example.com",
-      "Mia",
-      "2026-04-10",
-      [{ name: "Kitchen", description: null }],
-      undefined,
-      "member-1",
-    );
+    const { shouldSendChoreRoster } = await import("../email/core");
+    await expect(
+      shouldSendChoreRoster("guest-1", "primary-1"),
+    ).resolves.toBe(false);
 
+    // The guest's own row wins, so the inheriting primary is never consulted.
+    expect(mockPrisma.notificationPreference.findUnique).toHaveBeenCalledTimes(1);
     expect(mockPrisma.notificationPreference.findUnique).toHaveBeenCalledWith({
-      where: { memberId: "member-1" },
+      where: { memberId: "guest-1" },
     });
-    expect(mockPrisma.emailLog.create).not.toHaveBeenCalled();
-    expect(mockTransporter.sendMail).not.toHaveBeenCalled();
   });
 
-  it("sends when the member has choreRoster switched on", async () => {
+  it("uses the guest's OWN preference row when present — opted in → send", async () => {
     mockPrisma.notificationPreference.findUnique.mockResolvedValue(
       prefRecord({ choreRoster: true }),
     );
 
-    const { sendChoreRosterEmail } = await import("../email");
-    await sendChoreRosterEmail(
-      "mia@example.com",
-      "Mia",
-      "2026-04-10",
-      [{ name: "Kitchen", description: null }],
-      undefined,
-      "member-1",
+    const { shouldSendChoreRoster } = await import("../email/core");
+    await expect(
+      shouldSendChoreRoster("guest-1", "primary-1"),
+    ).resolves.toBe(true);
+  });
+
+  it("falls back to the inheriting primary — dependent has no own row, primary opted out → suppress", async () => {
+    mockPrisma.notificationPreference.findUnique.mockImplementation(
+      ({ where }: { where: { memberId: string } }) => {
+        if (where.memberId === "primary-1") {
+          return Promise.resolve(prefRecord({ choreRoster: false }));
+        }
+        return Promise.resolve(null); // dependent-1 has no own row
+      },
     );
 
-    expect(mockTransporter.sendMail).toHaveBeenCalledTimes(1);
+    const { shouldSendChoreRoster } = await import("../email/core");
+    await expect(
+      shouldSendChoreRoster("dependent-1", "primary-1"),
+    ).resolves.toBe(false);
+
+    expect(mockPrisma.notificationPreference.findUnique).toHaveBeenCalledWith({
+      where: { memberId: "dependent-1" },
+    });
+    expect(mockPrisma.notificationPreference.findUnique).toHaveBeenCalledWith({
+      where: { memberId: "primary-1" },
+    });
+  });
+
+  it("falls back to the inheriting primary — dependent has no own row, primary opted in → send", async () => {
+    mockPrisma.notificationPreference.findUnique.mockImplementation(
+      ({ where }: { where: { memberId: string } }) => {
+        if (where.memberId === "primary-1") {
+          return Promise.resolve(prefRecord({ choreRoster: true }));
+        }
+        return Promise.resolve(null);
+      },
+    );
+
+    const { shouldSendChoreRoster } = await import("../email/core");
+    await expect(
+      shouldSendChoreRoster("dependent-1", "primary-1"),
+    ).resolves.toBe(true);
+  });
+
+  it("defaults to send when neither the guest nor the primary has a row", async () => {
+    mockPrisma.notificationPreference.findUnique.mockResolvedValue(null);
+
+    const { shouldSendChoreRoster } = await import("../email/core");
+    await expect(
+      shouldSendChoreRoster("dependent-1", "primary-1"),
+    ).resolves.toBe(true);
+  });
+
+  it("defaults to send when the guest has no row and does not inherit an email", async () => {
+    mockPrisma.notificationPreference.findUnique.mockResolvedValue(null);
+
+    const { shouldSendChoreRoster } = await import("../email/core");
+    await expect(shouldSendChoreRoster("member-1", null)).resolves.toBe(true);
   });
 
   it("sends to a non-member guest (no memberId) without consulting preferences", async () => {
-    const { sendChoreRosterEmail } = await import("../email");
-    await sendChoreRosterEmail(
-      "guest@example.com",
-      "Guest",
-      "2026-04-10",
-      [{ name: "Kitchen", description: null }],
-      undefined,
-      null,
-    );
-
+    const { shouldSendChoreRoster } = await import("../email/core");
+    await expect(shouldSendChoreRoster(null, null)).resolves.toBe(true);
     expect(mockPrisma.notificationPreference.findUnique).not.toHaveBeenCalled();
-    expect(mockTransporter.sendMail).toHaveBeenCalledTimes(1);
   });
 });
 
