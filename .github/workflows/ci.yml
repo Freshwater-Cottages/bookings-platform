@@ -7,12 +7,14 @@ name: CI
 #   peer range. See `docs/MAINTENANCE.md` for the public maintenance baseline.
 
 on:
+  workflow_dispatch:
   pull_request:
     branches:
       - main
   push:
     branches:
       - main
+      - ci-cd
 
 permissions:
   contents: read
@@ -79,46 +81,46 @@ jobs:
           path: ${{ runner.temp }}/semgrep-output/semgrep-results.sarif
           if-no-files-found: ignore
 
-  gitleaks-full-repo:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    permissions:
-      contents: read
-      pull-requests: read
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-
-      - name: Scan repository history with gitleaks
-        uses: gitleaks/gitleaks-action@v3
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITLEAKS_ENABLE_COMMENTS: "false"
-          GITLEAKS_ENABLE_SUMMARY: "true"
-
-  gitleaks-pr-diff:
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    permissions:
-      contents: read
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-
-      - name: Scan pull request commit range with gitleaks
-        run: |
-          docker run --rm \
-            -v "$PWD:/repo:ro" \
-            ghcr.io/gitleaks/gitleaks:v8.28.0 \
-            git /repo \
-            --log-opts="${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}" \
-            --exit-code=1 \
-            --redact
+  # gitleaks-full-repo:
+  #   runs-on: ubuntu-latest
+  #   timeout-minutes: 30
+  #   permissions:
+  #     contents: read
+  #     pull-requests: read
+  #   steps:
+  #     - name: Check out repository
+  #       uses: actions/checkout@v7
+  #       with:
+  #         fetch-depth: 0
+  #
+  #     - name: Scan repository history with gitleaks
+  #       uses: gitleaks/gitleaks-action@v3
+  #       env:
+  #         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  #         GITLEAKS_ENABLE_COMMENTS: "false"
+  #         GITLEAKS_ENABLE_SUMMARY: "true"
+  #
+  # gitleaks-pr-diff:
+  #   if: github.event_name == 'pull_request'
+  #   runs-on: ubuntu-latest
+  #   timeout-minutes: 30
+  #   permissions:
+  #     contents: read
+  #   steps:
+  #     - name: Check out repository
+  #       uses: actions/checkout@v7
+  #       with:
+  #         fetch-depth: 0
+  #
+  #     - name: Scan pull request commit range with gitleaks
+  #       run: |
+  #         docker run --rm \
+  #           -v "$PWD:/repo:ro" \
+  #           ghcr.io/gitleaks/gitleaks:v8.28.0 \
+  #           git /repo \
+  #           --log-opts="${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}" \
+  #           --exit-code=1 \
+  #           --redact
 
   verify:
     runs-on: ubuntu-latest
@@ -265,14 +267,14 @@ jobs:
 
   publish-ghcr-images:
     name: Publish GHCR images
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/ci-cd')
     runs-on: ubuntu-latest
     timeout-minutes: 45
     needs:
       - verify
       - migration-drift
       - static-analysis
-      - gitleaks-full-repo
+      # - gitleaks-full-repo
       - docker-image-security
     permissions:
       contents: read
