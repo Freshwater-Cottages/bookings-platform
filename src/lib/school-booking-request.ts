@@ -517,6 +517,9 @@ export async function approveSchoolBookingRequest(input: {
       firstName: string;
       pin: string;
     }>;
+    ownerSubstitution:
+      | { invalidMemberId: string; substituteMemberId: string; reason: string }
+      | null;
     alreadyConverted: boolean;
   };
 
@@ -551,6 +554,7 @@ export async function approveSchoolBookingRequest(input: {
           bookingId: existing.convertedBookingId,
           schoolMemberId: existing.convertedMemberId,
           teacherAssignments: [],
+          ownerSubstitution: null,
           alreadyConverted: true as const,
         };
       }
@@ -609,6 +613,12 @@ export async function approveSchoolBookingRequest(input: {
 
       let booking: { id: string };
       let schoolMember: { id: string };
+      // Set when the held school owner failed re-validation at conversion and a
+      // fresh contact was substituted (issue #1255 residual-risk decision 1);
+      // drives a post-commit admin alert.
+      let ownerSubstitution:
+        | { invalidMemberId: string; substituteMemberId: string; reason: string }
+        | null = null;
 
       if (request.heldBookingId) {
         const held = await tx.booking.findUnique({
@@ -620,6 +630,42 @@ export async function approveSchoolBookingRequest(input: {
         }
         if (held.status !== BookingStatus.AWAITING_REVIEW) {
           throw new BookingRequestError("Held booking is no longer available", 409);
+        }
+
+        // Re-validate the held school owner at conversion (issue #1255
+        // residual-risk decision 1). If it had been MAPPED to a pre-existing
+        // contact, that contact could have changed state during the
+        // quote→accept window (login enabled, archived, deactivated, role
+        // changed). If it is no longer a valid non-login booking contact, DO NOT
+        // fail the accept: fall back to a fresh non-login SCHOOL contact (the
+        // pre-#1255 default owner) and flag an admin. Auto-created owners always
+        // pass, so this is a no-op except for a changed-state mapped contact.
+        let ownerId = held.memberId;
+        try {
+          await assertMappableOwnerContact(tx, held.memberId);
+        } catch (err) {
+          if (!(err instanceof BookingRequestError)) throw err;
+          const substitute = await tx.member.create({
+            data: {
+              email: request.contactEmail,
+              passwordHash: placeholderPasswordHash,
+              emailVerified: true,
+              firstName: schoolName.slice(0, 100),
+              lastName: "",
+              role: "SCHOOL",
+              ageTier: AgeTier.ADULT,
+              active: true,
+              canLogin: false,
+              phoneNumber: request.contactPhone,
+            },
+            select: { id: true },
+          });
+          ownerId = substitute.id;
+          ownerSubstitution = {
+            invalidMemberId: held.memberId,
+            substituteMemberId: substitute.id,
+            reason: err.message,
+          };
         }
 
         // Preserve the held booking's beds across the guest swap (issue #1254):
@@ -638,10 +684,14 @@ export async function approveSchoolBookingRequest(input: {
             hasNonMembers: true,
             notes: request.message,
             createdById: input.adminMemberId,
+            // Point the held booking at the (possibly substituted) owner. On the
+            // no-substitution path this rewrites the same id (a no-op); bed
+            // allocations live on guest rows and are unaffected by ownership.
+            memberId: ownerId,
           },
           select: { id: true },
         });
-        schoolMember = { id: held.memberId };
+        schoolMember = { id: ownerId };
       } else {
         const capacityRanges = guests.map(() => ({
           stayStart: request.checkIn,
@@ -779,6 +829,7 @@ export async function approveSchoolBookingRequest(input: {
         bookingId: booking.id,
         schoolMemberId: schoolMember.id,
         teacherAssignments,
+        ownerSubstitution,
         alreadyConverted: false as const,
       };
     });
@@ -834,9 +885,24 @@ export async function approveSchoolBookingRequest(input: {
         );
       }
     } else {
+      // Decision 3 (issue #1255 residual risk): name the party actually being
+      // invoiced — the booking owner (the mapped contact when the request was
+      // mapped), which can differ from the raw request school/contact. On the
+      // non-mapped path the owner's name/email equal schoolName/contactEmail, so
+      // this resolves to the same values (no behaviour change).
+      const invoiceOwner = await prisma.member.findUnique({
+        where: { id: conversion.schoolMemberId },
+        select: { firstName: true, lastName: true, email: true },
+      });
+      const invoiceName =
+        [invoiceOwner?.firstName, invoiceOwner?.lastName]
+          .filter(Boolean)
+          .join(" ")
+          .trim() || schoolName;
+      const invoiceEmail = invoiceOwner?.email ?? request.contactEmail;
       sendAdminSchoolManualInvoiceEmail({
-        schoolName,
-        contactEmail: request.contactEmail,
+        schoolName: invoiceName,
+        contactEmail: invoiceEmail,
         checkIn: request.checkIn,
         checkOut: request.checkOut,
         guestCount: guests.length,
@@ -872,6 +938,46 @@ export async function approveSchoolBookingRequest(input: {
         checkOut: request.checkOut.toISOString(),
       },
     });
+
+    // The held school owner failed re-validation and a fresh contact was
+    // substituted (issue #1255 residual-risk decision 1). Surface it for admin
+    // follow-up: the confirmed booking (and its Xero invoice / manual-invoice
+    // notice) now bill the fresh contact rather than the intended mapped
+    // organisation, so an admin may need to reconcile the Xero contact. A
+    // durable audit row is the attention channel (see the PR body for why this
+    // is not an email alert).
+    if (conversion.ownerSubstitution) {
+      logger.warn(
+        {
+          bookingRequestId: request.id,
+          bookingId: conversion.bookingId,
+          invalidMemberId: conversion.ownerSubstitution.invalidMemberId,
+          substituteMemberId: conversion.ownerSubstitution.substituteMemberId,
+          reason: conversion.ownerSubstitution.reason,
+        },
+        "Held school booking owner was invalid at conversion; substituted a fresh non-login contact"
+      );
+      logAudit({
+        action: "booking_request.owner_substituted",
+        memberId: input.adminMemberId,
+        actorMemberId: input.adminMemberId,
+        subjectMemberId: conversion.schoolMemberId,
+        targetId: request.id,
+        entityType: "BookingRequest",
+        entityId: request.id,
+        category: "booking",
+        outcome: "success",
+        summary:
+          "Held school booking-request owner was no longer a valid non-login contact at conversion; a fresh contact was substituted so the accept could proceed",
+        metadata: {
+          bookingId: conversion.bookingId,
+          requestId: request.id,
+          invalidMemberId: conversion.ownerSubstitution.invalidMemberId,
+          substituteMemberId: conversion.ownerSubstitution.substituteMemberId,
+          reason: conversion.ownerSubstitution.reason,
+        },
+      });
+    }
   } else {
     // Observability-only note that a duplicate accept was absorbed (#1232).
     logAudit({

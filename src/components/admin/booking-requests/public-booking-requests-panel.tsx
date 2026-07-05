@@ -272,6 +272,8 @@ export function PublicBookingRequestsPanel({
   // Per-request owner-contact decision (issue #1255): default is to create a new
   // non-login contact; the admin may instead map to an existing one.
   const [ownerChoices, setOwnerChoices] = useState<Record<string, OwnerContactChoice>>({});
+  // Request id whose "Release hold" action is awaiting inline confirmation.
+  const [releaseConfirmId, setReleaseConfirmId] = useState<string | null>(null);
   const [error, setError] = useState("");
 
   function ownerChoiceFor(requestId: string): OwnerContactChoice {
@@ -569,6 +571,35 @@ export function PublicBookingRequestsPanel({
       await fetchRequests();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to hold slots");
+    } finally {
+      setActioningId(null);
+    }
+  }
+
+  async function handleReleaseHold(request: PublicBookingRequestData) {
+    if (!request.heldBookingId) return; // guard: nothing to release
+    setActioningId(request.id);
+    setError("");
+    try {
+      const response = await fetch(
+        `/api/admin/booking-requests/${request.id}/release-hold`,
+        { method: "POST" }
+      );
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to release hold");
+      }
+      toast.success("Hold released. You can now change the contact and re-hold.");
+      setReleaseConfirmId(null);
+      // Reset any stale mapping choice so the picker starts from "create new".
+      setOwnerChoices((prev) => {
+        const next = { ...prev };
+        delete next[request.id];
+        return next;
+      });
+      await fetchRequests();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to release hold");
     } finally {
       setActioningId(null);
     }
@@ -894,9 +925,49 @@ export function PublicBookingRequestsPanel({
                   ].includes(request.status) ? (
                     <div className="space-y-3 rounded-md border border-slate-200 p-3">
                       {request.heldBookingId ? (
-                        <div className="rounded-md border bg-muted/40 p-3 text-sm text-muted-foreground">
-                          Booking contact was set when slots were held. Release
-                          the hold to change which contact owns this booking.
+                        <div className="space-y-2 rounded-md border bg-muted/40 p-3 text-sm text-muted-foreground">
+                          <p>
+                            Booking contact was set when slots were held. Release
+                            the hold to change which contact owns this booking.
+                          </p>
+                          {releaseConfirmId === request.id ? (
+                            <div className="space-y-2 rounded-md border border-destructive/40 bg-destructive/10 p-2 text-destructive">
+                              <p className="text-xs">
+                                This frees the held beds and returns the request
+                                to an un-held state so you can re-map and re-hold.
+                              </p>
+                              <div className="flex flex-wrap gap-2">
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="destructive"
+                                  onClick={() => handleReleaseHold(request)}
+                                  disabled={isActioning}
+                                >
+                                  {isActioning ? "Releasing…" : "Confirm release"}
+                                </Button>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => setReleaseConfirmId(null)}
+                                  disabled={isActioning}
+                                >
+                                  Keep hold
+                                </Button>
+                              </div>
+                            </div>
+                          ) : (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={() => setReleaseConfirmId(request.id)}
+                              disabled={isActioning}
+                            >
+                              Release hold
+                            </Button>
+                          )}
                         </div>
                       ) : (
                         <BookingRequestContactPicker

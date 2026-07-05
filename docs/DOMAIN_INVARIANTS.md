@@ -250,8 +250,17 @@ the admin either creates a new non-login `NON_MEMBER`/`SCHOOL` contact or maps
 the request onto an existing non-login `NON_MEMBER`/`SCHOOL` contact, and
 mapping reuses that contact's Xero contact instead of spawning a duplicate. A
 booking request is never mapped onto a `canLogin:true` member, a held request's
-owner stays fixed until the hold is released, and per-teacher hut-leader records
-are always created fresh.
+owner stays fixed until the hold is released (an admin **Release hold** action
+cancels the `AWAITING_REVIEW` held booking through the shared cancel path,
+freeing the beds and re-enabling the contact choice), and per-teacher hut-leader
+records are always created fresh. The held owner is re-validated at conversion:
+if a previously mapped contact is no longer a valid non-login contact by the time
+the requester accepts (login enabled, archived, deactivated, role changed), the
+accept still succeeds — a fresh non-login contact is substituted and an
+admin-attention audit row (`booking_request.owner_substituted`) is recorded so
+the substituted Xero contact can be reconciled. When the Xero module is off, the
+manual-invoice admin notification names the resolved booking owner (the mapped
+contact when mapped), not the raw request school/contact.
 Headcount or tier changes still go through the admin re-quote flow, and
 unconfirmed lists inside the prompt window surface on the stuck-state
 dashboard. Standard edit paths (batch
