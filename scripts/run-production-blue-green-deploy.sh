@@ -8,6 +8,7 @@ if [[ ! -d "$DEFAULT_SOURCE_REPO" && -d "$HOME/AlpineClubBookingsNZ" ]]; then
 fi
 SOURCE_REPO="${SOURCE_REPO:-$DEFAULT_SOURCE_REPO}"
 DEPLOY_REF="${DEPLOY_REF:-origin/main}"
+SOURCE_REPO_REF="${SOURCE_REPO_REF:-$DEPLOY_REF}"
 FETCH_LATEST="${FETCH_LATEST:-1}"
 DEPLOY_WORKSPACE_ROOT="${DEPLOY_WORKSPACE_ROOT:-$HOME/tacbookings-deployments}"
 COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-$(basename "$SOURCE_REPO" | tr '[:upper:]' '[:lower:]')}"
@@ -98,12 +99,22 @@ write_active_upstream_file() {
 
 resolve_ref() {
   if env_flag_is_true "$FETCH_LATEST"; then
-    info "Fetching latest origin/main in $SOURCE_REPO"
-    git -C "$SOURCE_REPO" fetch --prune origin main
+    info "Fetching latest refs from origin in $SOURCE_REPO"
+    git -C "$SOURCE_REPO" fetch --prune origin
   fi
 
   RESOLVED_REF="$(git -C "$SOURCE_REPO" rev-parse "${DEPLOY_REF}^{commit}")"
   info "Resolved ${DEPLOY_REF} to commit ${RESOLVED_REF}"
+}
+
+expected_local_branch_from_ref() {
+  local ref="$1"
+
+  case "$ref" in
+    refs/heads/*) printf '%s' "${ref#refs/heads/}" ;;
+    origin/*) printf '%s' "${ref#origin/}" ;;
+    *) printf '%s' "$ref" ;;
+  esac
 }
 
 resolve_image_refs() {
@@ -132,15 +143,36 @@ create_workspace() {
 
 validate_source_repo_state() {
   local branch
+  local expected_branch
+  local expected_commit
+  local head_commit
 
   branch="$(git -C "$SOURCE_REPO" rev-parse --abbrev-ref HEAD)"
-  if [ "$branch" != "main" ]; then
-    echo "Source repository must be on main before deploy. Current branch: $branch" >&2
+  expected_branch="$(expected_local_branch_from_ref "$SOURCE_REPO_REF")"
+  if git -C "$SOURCE_REPO" show-ref --verify --quiet "refs/heads/$expected_branch"; then
+    if [ "$branch" != "$expected_branch" ]; then
+      echo "Source repository must be on ${expected_branch} before deploy. Current branch: $branch" >&2
+      return 1
+    fi
+  else
+    expected_commit="$(git -C "$SOURCE_REPO" rev-parse "${SOURCE_REPO_REF}^{commit}")" || {
+      echo "Unable to resolve SOURCE_REPO_REF (${SOURCE_REPO_REF}) in $SOURCE_REPO" >&2
+      return 1
+    }
+    head_commit="$(git -C "$SOURCE_REPO" rev-parse HEAD)"
+    if [ "$head_commit" != "$expected_commit" ]; then
+      echo "Source repository must resolve to ${SOURCE_REPO_REF} (${expected_commit}) before deploy. Current HEAD: ${head_commit}" >&2
+      return 1
+    fi
+  fi
+
+  if ! git -C "$SOURCE_REPO" rev-parse "${DEPLOY_REF}^{commit}" >/dev/null 2>&1; then
+    echo "Unable to resolve DEPLOY_REF (${DEPLOY_REF}) in $SOURCE_REPO" >&2
     return 1
   fi
 
   if ! source_repo_is_clean; then
-    echo "Source repository must be clean on main before deploy, including no untracked files." >&2
+    echo "Source repository must be clean on ${SOURCE_REPO_REF} before deploy, including no untracked files." >&2
     return 1
   fi
 }

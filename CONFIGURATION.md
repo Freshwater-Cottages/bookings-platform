@@ -701,6 +701,7 @@ rate-limited, or temporarily unavailable.
 | `GHCR_READ_TOKEN`                      | Example token name for logging a host into GHCR with `read:packages`. |
 | `SOURCE_REPO`                          | Source checkout used by the production wrapper.                       |
 | `DEPLOY_REF`                           | Git ref deployed by the production wrapper, default `origin/main`.    |
+| `SOURCE_REPO_REF`                      | Expected checked-out source ref before deploy, default `DEPLOY_REF`.  |
 | `FETCH_LATEST`                         | Whether the wrapper fetches before resolving `DEPLOY_REF`.            |
 | `DEPLOY_WORKSPACE_ROOT`                | Parent directory for clean deploy workspaces.                         |
 | `SYNC_SOURCE_REPO_AFTER_DEPLOY`        | Whether the wrapper syncs the source checkout after deploy.           |
