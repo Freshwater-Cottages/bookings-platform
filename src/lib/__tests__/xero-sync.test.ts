@@ -547,12 +547,18 @@ describe("startXeroSyncOperation", () => {
     });
 
     const createArg = mocks.operationCreate.mock.calls[0][0];
-    // The denormalized column is derived from the SAME persisted payload, so it
-    // is exactly equal to requestPayload.queueType -- the round-trip invariant.
+    // At enqueue the denormalized column is derived from the SAME persisted
+    // payload, so it is exactly equal to requestPayload.queueType.
     expect(createArg.data.queueType).toBe("BOOKING_INVOICE");
     expect(createArg.data.queueType).toBe(
       (createArg.data.requestPayload as { queueType?: string }).queueType
     );
+    // #1272: this enqueue-time equality is the invariant #1272 relies on (it
+    // scans only PENDING/WAITING_PAYMENT). Post-dispatch, handlers overwrite
+    // requestPayload wholesale and drop queueType (e.g. xero-booking-invoices),
+    // so the column keeps its enqueue value while payload.queueType is gone --
+    // an intentional divergence that needs a DB round-trip to exercise, so it is
+    // asserted here only at creation.
   });
 
   it("persists a null queueType for a REQUEUE payload that carries none (#1271)", async () => {

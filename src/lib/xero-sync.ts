@@ -332,10 +332,14 @@ export async function startXeroSyncOperation(
     ? (await db.xeroSyncOperation.count({ where: attemptWhere })) + 1
     : 1;
 
-  // Denormalized, indexed copy of the outbox queue type (#1271, item 3 of
-  // #1208). Derive it verbatim from the SAME sanitized payload that gets
-  // persisted so the column can never desync from `requestPayload.queueType`.
-  // Rows without a queueType (REQUEUE, inbound reconciles, backfill) stay null.
+  // Denormalized copy of the outbox queue type (#1271, item 3 of #1208),
+  // captured once here at enqueue and never updated afterward. Derive it from
+  // the SAME sanitized payload that gets persisted so it mirrors the
+  // enqueue-time `requestPayload.queueType` exactly. Dispatch reads queueType
+  // from the payload (not this column) BEFORE handlers may overwrite
+  // requestPayload, so the two can legitimately diverge post-dispatch -- safe
+  // because nothing reads this column yet (see the schema comment; #1272). Rows
+  // without a queueType (REQUEUE, inbound reconciles, backfill) stay null.
   const requestPayload = sanitizeForJson(input.requestPayload);
   const payloadRecord = asRecord(requestPayload);
   const queueType = payloadRecord ? readString(payloadRecord.queueType) : null;

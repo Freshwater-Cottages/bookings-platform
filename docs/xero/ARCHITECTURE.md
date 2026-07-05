@@ -499,11 +499,17 @@ These are candidates for future issues, not commitments.
    the payload module's constant list removes three copies of the same
    knowledge. **Done (#1271):** `queueType` is now a denormalized, indexed
    `XeroSyncOperation` column (`@@index([queueType, status, createdAt])`),
-   written once at row creation in `startXeroSyncOperation` from the same
-   sanitized payload that is persisted, backfilled from
-   `requestPayload->>'queueType'`. The payload field stays canonical — the
-   PENDING-scan `OR` and the parsing switch still read it. Switching those
-   reads to the column (making it the sole source) is deferred to #1272.
+   captured once at enqueue in `startXeroSyncOperation` (and backfilled from
+   `requestPayload->>'queueType'`) and never updated afterward. The payload field
+   stays canonical — the PENDING-scan `OR` and the parsing switch still read it.
+   **Caveat for the #1272 reader:** the column mirrors the payload only for rows
+   still awaiting dispatch (`PENDING`/`WAITING_PAYMENT`); once a row is dispatched
+   some handlers (e.g. the booking-invoice create/update) overwrite
+   `requestPayload` wholesale and drop `queueType`, so the column and payload
+   diverge post-dispatch. That is safe because nothing reads the column yet, and
+   the set #1272 scans is exactly the pre-dispatch set where they still agree.
+   Switching those reads to the column (making it the sole source) is deferred to
+   #1272.
 4. **Unify the operation-replay stack.** `xero-operation-retry`,
    `xero-operation-queue`, and `xero-stale-operations` plus the
    claim-to-RUNNING `updateMany` pattern (duplicated in outbox and queue)

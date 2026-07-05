@@ -1,11 +1,17 @@
 -- Item 3 of #1208 / #1271: promote the Xero outbox queue type to a
 -- denormalized, indexed first-class column on "XeroSyncOperation".
 --
--- The value stays canonical inside requestPayload->>'queueType' (the payload
--- parsing switch in xero-operation-outbox-payload.ts keeps switching on it);
--- this column is a denormalized COPY only. Making it the sole source (dropping
--- the payload read) is deferred to #1272. queueType is set at enqueue and is
--- immutable thereafter, so the column never desyncs from the payload.
+-- Denormalized copy of the outbox discriminator, captured once at enqueue in
+-- startXeroSyncOperation and never updated afterward. requestPayload->>'queueType'
+-- stays canonical (the payload parsing switch keeps switching on it); this
+-- column is a COPY only, and making it the sole source is deferred to #1272.
+-- Dispatch reads queueType from requestPayload (not this column), BEFORE handlers
+-- may overwrite requestPayload -- so after dispatch this column can diverge from
+-- the payload (some handlers rewrite requestPayload wholesale and drop
+-- queueType). That is expected and safe: nothing reads this column yet, and for
+-- every row still awaiting dispatch (PENDING / WAITING_PAYMENT -- the set #1272
+-- will scan) the column faithfully mirrors the enqueue-time queueType. The
+-- backfill below captures that same value for existing rows.
 
 -- 1. Add the nullable column. Nullable because REQUEUE, BACKFILL, inbound
 --    reconcile, and other non-outbox rows legitimately carry no queueType.
