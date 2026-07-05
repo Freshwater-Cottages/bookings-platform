@@ -206,29 +206,37 @@ The source of truth is `prisma/schema.prisma`. Key domains are:
    (per-row form) in `src/lib/booking-status.ts`.
 3. Minimum-stay, booking-window, age-tier, membership, group-discount, fixed or
    percentage promo, and account-credit rules are applied.
-4. If all guests are members, or check-in is within the non-member hold window,
-   the booking can proceed to payment immediately.
-5. If non-members are included outside the hold window, a card can be saved and
-   the booking remains pending until the hold date.
-6. `BookingGuest.stayStart` and `BookingGuest.stayEnd` record the actual
+4. Booking Policies resolve the effective non-member hold policy from the
+   check-in date: a date-specific `BookingPeriod` can override both the
+   default enabled flag and the confirmation threshold. Existing clubs default
+   to Members First (`nonMemberHoldEnabled=true`), while First Paid, First In
+   disables provisional non-member holds for that policy row.
+5. If all guests are members, the non-member hold policy is disabled, or
+   check-in is inside the configured hold window, the whole booking proceeds to
+   normal payment immediately.
+6. If non-members are included outside an enabled Members First hold window, a
+   card can be saved and the non-member portion remains pending until the hold
+   date. Mixed member/non-member parties split only in this pending case; inside
+   the window or under First Paid, First In they stay one normal booking.
+7. `BookingGuest.stayStart` and `BookingGuest.stayEnd` record the actual
    date-only range for each guest inside the parent booking envelope. Capacity,
    lodge lists, rosters, and booking-derived finance metrics count a guest only
    on nights in that individual range.
-7. Capacity-sensitive writes use a PostgreSQL advisory transaction lock so
+8. Capacity-sensitive writes use a PostgreSQL advisory transaction lock so
    overlapping booking decisions serialize at the current lodge scale.
    Member lifecycle approval (delete / archive) acquires
    `pg_advisory_xact_lock(hashtext('member-lifecycle:<memberId>'))` inside
    the transaction. Future approve / reject paths that recount eligibility
    then mutate the member graph should follow the same idiom so a parallel
    write cannot race the re-check.
-8. Payment state records an explicit source. Stripe payments stay on Stripe
+9. Payment state records an explicit source. Stripe payments stay on Stripe
    PaymentIntent, refund, and recovery paths; Internet Banking payments issue a
    Xero invoice and settle through inbound Xero reconciliation. By default,
    Internet Banking bookings do not hold capacity until reconciliation performs
    the final capacity claim. Admin settings can opt into bed-slot holding for a
    bounded number of days, in which case the booking is `CONFIRMED` while the
    Xero invoice remains unpaid.
-9. Bed allocations reconcile when bookings are confirmed, modified, waitlist
+10. Bed allocations reconcile when bookings are confirmed, modified, waitlist
    confirmed, force-confirmed, cancelled, completed, or deleted. Automatic
    allocation can fill missing guest nights from active room/bed inventory, and
    admins can manually move or approve allocations.
