@@ -26,6 +26,7 @@
  * must confirm against Xero before treating a flag as a real accounting error.
  */
 
+import { getStayNights } from "./pricing";
 import { formatDate } from "./xero-invoice-helpers";
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
@@ -293,22 +294,14 @@ export interface RoundingAuditScanResult {
 }
 
 /**
- * Count the nights in a stay the same way the pricing engine does: whole
- * date-only nights from checkIn (inclusive) to checkOut (exclusive).
+ * Count the nights in a stay exactly as the invoice builder did — via the
+ * pricing engine's `getStayNights` (the pre-#1231 legacy path used
+ * `getStayNights(checkIn, checkOut).length`). Reusing it, rather than
+ * reimplementing the arithmetic, keeps the legacy-path replay faithful across
+ * the engine's date-only / timezone normalisation.
  */
 export function countStayNights(checkIn: Date, checkOut: Date): number {
-  const start = Date.UTC(
-    checkIn.getUTCFullYear(),
-    checkIn.getUTCMonth(),
-    checkIn.getUTCDate()
-  );
-  const end = Date.UTC(
-    checkOut.getUTCFullYear(),
-    checkOut.getUTCMonth(),
-    checkOut.getUTCDate()
-  );
-  const diff = Math.round((end - start) / ONE_DAY_MS);
-  return diff > 0 ? diff : 0;
+  return getStayNights(checkIn, checkOut).length;
 }
 
 /**

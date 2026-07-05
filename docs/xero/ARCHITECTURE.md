@@ -402,8 +402,12 @@ invoices.
   would have produced a drifting line total under the pre-#1231 builder. It does
   **not** prove the live Xero invoice is still wrong: the invoice may have been
   issued after #1231 (already correct — `payment.createdAt` is only a proxy and is
-  over-inclusive), or since been voided / credited / superseded. The audit cannot
-  see Xero invoice status, so **confirm each candidate against Xero before acting.**
+  over-inclusive), or since been voided / credited / superseded. The audit also
+  replays against the booking's **current** persisted night data: a booking
+  re-priced or modified after its invoice was issued will replay against the
+  post-modification data, which may differ from what was actually invoiced. The
+  audit cannot see Xero invoice status, so **confirm each candidate against Xero
+  before acting.**
 - **Remediation is out of scope here.** Any correction is a **manual accounting
   action** (a Xero credit note / adjustment by the operator) or a separately-scoped
   repair task — this audit never edits money, invoices, or Xero.
