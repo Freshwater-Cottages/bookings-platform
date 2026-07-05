@@ -79,7 +79,9 @@ All notable public reference-release changes should be recorded here.
 - Ran a second hardening wave (epic #1204) that closed out every wave-1
   residual surfaced by the quality-epic audits. Grouped highlights below.
 - Money and booking correctness: made booking cancellation single-flight
-  (#1160); extended the person-night conflict guard to the date-change flow
+  (#1160) and booking-request quote acceptance idempotent so a retry or timeout
+  can no longer double-book, double-charge, or double-invoice (#1232); extended
+  the person-night conflict guard to the date-change flow
   (#1157) and to booking-request approval, quote-hold, and school-request
   approval (#1158), and froze the advisory-lock-before-guard ordering for every
   member-linked guest-night writer by test (#1159); fixed Xero invoice-line
@@ -95,8 +97,11 @@ All notable public reference-release changes should be recorded here.
   card-paid bookings (#1164); the cancellation help text and email copy shipped
   with it and the committee was flagged for a heads-up.
 - Xero and books integrity: a second refund on a payment now always receives a
-  refund credit note, with a health check (#1162); the reconciliation report
-  surfaces failing inbound events (#1196); the money-path invariant audit was
+  refund credit note, with a health check (#1162); the late inbound
+  capacity-fail credit note is now enqueued inside the reconcile transaction so a
+  crash can no longer leave a local credit with no Xero mirror (#1233); the
+  reconciliation report surfaces failing inbound events (#1196); the money-path
+  invariant audit was
   extended to the previously-unaudited surfaces (#1205); and the Xero subsystem
   was split into cohesive modules behaviour-identically (#1208).
 - Platform, security, and hygiene: next-auth dependency hygiene (dropped a dead
@@ -120,7 +125,9 @@ All notable public reference-release changes should be recorded here.
   heading order, then verified the booking-wizard and admin-members keyboard
   accessibility live (#1242, #1295); and noted on the site-style setup screen
   that the public site — including the membership application form — stays hidden
-  until saved (#1245). Config: a one-time idempotent data migration bumps any
+  until saved (#1245); and aligned transactional email theming with the
+  configured site theme (#1186). Config: a one-time idempotent data migration
+  bumps any
   persisted site-style theme still on the old sub-AA default gold `#7a8f6a` to
   the AA-compliant `#8fa87c` so those installs can save again (#1244).
 - Verification and docs: refreshed `DOMAIN_INVARIANTS.md` and
