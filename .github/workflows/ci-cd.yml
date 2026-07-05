@@ -334,7 +334,7 @@ jobs:
 
   trigger-infra-deploy:
     name: Trigger infrastructure deploy
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/ci-cd'
     runs-on: ubuntu-latest
     needs:
       - publish-ghcr-images
