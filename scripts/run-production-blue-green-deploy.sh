@@ -29,6 +29,8 @@ CADDY_SERVICE="caddy"
 READINESS_PATH="/api/health/ready"
 WORKSPACE=""
 RESOLVED_REF=""
+EXPECTED_SOURCE_BRANCH=""
+DEPLOY_REF_REMOTE="origin"
 
 step() {
   printf "\n[%s] %s\n" "$1" "$2"
@@ -67,6 +69,62 @@ env_flag_is_true() {
   esac
 }
 
+resolve_deploy_ref_contract() {
+  local ref="$DEPLOY_REF"
+  local maybe_remote
+
+  if [ -z "$ref" ]; then
+    echo "DEPLOY_REF must not be empty." >&2
+    return 1
+  fi
+
+  if [[ "$ref" =~ ^[0-9a-fA-F]{7,40}$ ]]; then
+    echo "DEPLOY_REF must be a branch-style ref (for example ci-cd or origin/ci-cd), not a raw commit SHA." >&2
+    return 1
+  fi
+
+  case "$ref" in
+    refs/heads/*)
+      EXPECTED_SOURCE_BRANCH="${ref#refs/heads/}"
+      ;;
+    refs/remotes/*/*)
+      maybe_remote="${ref#refs/remotes/}"
+      DEPLOY_REF_REMOTE="${maybe_remote%%/*}"
+      EXPECTED_SOURCE_BRANCH="${maybe_remote#*/}"
+      ;;
+    refs/tags/*|refs/pull/*|refs/*)
+      echo "DEPLOY_REF must point to a branch ref for source branch validation. Got: $ref" >&2
+      return 1
+      ;;
+    */*)
+      maybe_remote="${ref%%/*}"
+      if git -C "$SOURCE_REPO" remote get-url "$maybe_remote" >/dev/null 2>&1; then
+        DEPLOY_REF_REMOTE="$maybe_remote"
+        EXPECTED_SOURCE_BRANCH="${ref#*/}"
+      else
+        EXPECTED_SOURCE_BRANCH="$ref"
+      fi
+      ;;
+    *)
+      if git -C "$SOURCE_REPO" show-ref --verify --quiet "refs/tags/$ref"; then
+        echo "DEPLOY_REF must be a branch-style ref; tag refs are not allowed for wrapper safety checks: $ref" >&2
+        return 1
+      fi
+      EXPECTED_SOURCE_BRANCH="$ref"
+      ;;
+  esac
+
+  if [ -z "$EXPECTED_SOURCE_BRANCH" ]; then
+    echo "Could not derive an expected branch name from DEPLOY_REF=$DEPLOY_REF." >&2
+    return 1
+  fi
+
+  if ! git -C "$SOURCE_REPO" remote get-url "$DEPLOY_REF_REMOTE" >/dev/null 2>&1; then
+    echo "Configured deploy remote does not exist in SOURCE_REPO: $DEPLOY_REF_REMOTE" >&2
+    return 1
+  fi
+}
+
 source_repo_is_clean() {
   [ -z "$(git -C "$SOURCE_REPO" status --short --untracked-files=normal)" ]
 }
@@ -98,8 +156,8 @@ write_active_upstream_file() {
 
 resolve_ref() {
   if env_flag_is_true "$FETCH_LATEST"; then
-    info "Fetching latest origin/main in $SOURCE_REPO"
-    git -C "$SOURCE_REPO" fetch --prune origin main
+    info "Fetching latest refs from ${DEPLOY_REF_REMOTE} in $SOURCE_REPO"
+    git -C "$SOURCE_REPO" fetch --prune "$DEPLOY_REF_REMOTE"
   fi
 
   RESOLVED_REF="$(git -C "$SOURCE_REPO" rev-parse "${DEPLOY_REF}^{commit}")"
@@ -134,13 +192,13 @@ validate_source_repo_state() {
   local branch
 
   branch="$(git -C "$SOURCE_REPO" rev-parse --abbrev-ref HEAD)"
-  if [ "$branch" != "main" ]; then
-    echo "Source repository must be on main before deploy. Current branch: $branch" >&2
+  if [ "$branch" != "$EXPECTED_SOURCE_BRANCH" ]; then
+    echo "Source repository must be on expected deploy branch before deploy. DEPLOY_REF=${DEPLOY_REF} expects branch ${EXPECTED_SOURCE_BRANCH}; current branch: $branch" >&2
     return 1
   fi
 
   if ! source_repo_is_clean; then
-    echo "Source repository must be clean on main before deploy, including no untracked files." >&2
+    echo "Source repository must be clean on branch ${EXPECTED_SOURCE_BRANCH} before deploy, including no untracked files." >&2
     return 1
   fi
 }
@@ -303,7 +361,7 @@ sync_source_repo_to_deployed_commit() {
     return 0
   fi
 
-  git -C "$SOURCE_REPO" fetch --prune origin main
+  git -C "$SOURCE_REPO" fetch --prune "$DEPLOY_REF_REMOTE"
   git -C "$SOURCE_REPO" merge --ff-only "$RESOLVED_REF"
   info "Updated $SOURCE_REPO to deployed commit ${RESOLVED_REF}."
 }
@@ -377,6 +435,7 @@ git -C "$SOURCE_REPO" rev-parse --is-inside-work-tree >/dev/null
   echo "Source repository is missing docker-compose.yml" >&2
   exit 1
 }
+resolve_deploy_ref_contract
 validate_source_repo_state
 info "Source repository contract looks valid."
 
