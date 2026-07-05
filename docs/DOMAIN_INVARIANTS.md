@@ -60,6 +60,13 @@ Future reviews and issues should cite this file when proposing changes.
   and anonymization that clears the member link — legitimately skip the guard, as
   does the non-member group-join path (`verifyAndCreateNonMemberJoin`, which
   writes only `memberId: null` guests and takes the lock but is a guard no-op).
+  When an admin links a booking-request guest to a real member, the linking UI
+  runs an **advisory-only** overlap pre-check
+  (`findLinkedGuestMemberNightConflicts`, #1226) so any conflict surfaces before
+  approve/hold. It is non-authoritative — it never throws, blocks, or takes the
+  advisory lock, and it excludes the request's own held booking — the
+  transactional `assertNoBookingMemberNightConflicts` guard at approve/hold time
+  remains the sole enforcer.
 - A member holds at most one group-join roster row per group
   (`GroupBookingJoin` unique on groupBookingId + joinerMemberId, #1039
   item 2). The roster row is written inside the child booking's transaction:
@@ -202,7 +209,8 @@ client_secret whose amount no longer matches `finalPriceCents`, and the
 Stripe webhook alerts admins before refusing a capture that mismatches the
 booking's current total), and the non-member
 hold is recalculated from the remaining guests (all-member bookings clear the
-hold; bookings inside the hold window move PENDING → PAYMENT_PENDING). The same
+hold; bookings inside the hold window or under a disabled hold policy move
+PENDING → PAYMENT_PENDING). The same
 change must produce the same booking state regardless of which endpoint made
 it.
 
