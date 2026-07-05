@@ -51,11 +51,11 @@ import { renderBookingMessageTemplate } from "@/lib/booking-message-definitions"
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { resolveInternalReturnPath } from "@/lib/internal-return-path";
 import { OPENABLE_ORGANISER_STATUSES } from "@/lib/group-booking";
+import { hasAdminAccess } from "@/lib/access-roles";
 import {
-  authorizationRoleFromAccessRoles,
-  hasAdminAccess,
-} from "@/lib/access-roles";
-import { hasAdminAreaAccess } from "@/lib/admin-permissions";
+  bookingManagementAuthorizationRole,
+  hasAdminAreaAccess,
+} from "@/lib/admin-permissions";
 import {
   OrganiserGroupBookingCard,
   type OrganiserGroupState,
@@ -98,7 +98,11 @@ export default async function BookingDetailPage({
   const session = await auth();
   if (!session) redirect("/login");
   const isAdmin = hasAdminAccess(session.user);
-  const viewerAuthorizationRole = authorizationRoleFromAccessRoles(session.user);
+  // Issue #1313 (option A2): a Booking Officer (bookings:edit) resolves to ADMIN
+  // so the edit policy and the BookingEditor treat them as acting on-behalf of
+  // the member — matching the widened /api/bookings/[id]/modify authority. A
+  // Full Admin already resolves to ADMIN; member / read-only viewers stay USER.
+  const viewerAuthorizationRole = bookingManagementAuthorizationRole(session.user);
 
   const booking = await prisma.booking.findUnique({
     where: { id },
@@ -221,11 +225,6 @@ export default async function BookingDetailPage({
     !isAdmin &&
     booking.guests.some((guest) => guest.memberId === session.user.id);
   const canManageBooking = isBookingOwner || isAdmin;
-  // A Full Admin viewing someone else's booking acts on behalf of the member
-  // (admin-on-behalf is intentional). Member-framed self-service controls
-  // ("Save Payment Method", "Complete Payment", the owner-second-person
-  // on-hold notice) are gated off this so they only ever render for the owner.
-  const actingAsAdmin = isAdmin && !isBookingOwner;
   // Issue #1289: Booking Officer / Read-only Admin reach the admin bookings
   // list and calendar (gated on bookings-area view), so the member-facing
   // detail route must admit the same viewers read-only for list/detail parity.
@@ -254,6 +253,12 @@ export default async function BookingDetailPage({
   });
   // Full Admins and Booking Officers both see the admin-operational tooling.
   const canSeeAdminTools = isAdmin || canAdminEditBookings;
+  // Issue #1313 (option A2): a non-owner Full Admin OR Booking Officer cancels /
+  // modifies on behalf of the member. Both flow through the SAME admin-on-behalf
+  // semantics (suppress owner second-person framing, policy wording, and the
+  // suppress-customer-notification path) rather than a separate officer code
+  // path — so this one predicate replaces the earlier isAdmin-only actingAsAdmin.
+  const actingOnBehalf = (isAdmin || canAdminEditBookings) && !isBookingOwner;
   // A non-owner admin-type viewer (Full Admin, Booking Officer, or read-only
   // admin) must not be addressed with owner second-person copy ("your place /
   // your stay") — issue #1289. Linked guests keep the member framing.
@@ -328,7 +333,10 @@ export default async function BookingDetailPage({
   const isWaitlisted = booking.status === "WAITLISTED";
   const isWaitlistOffered = booking.status === "WAITLIST_OFFERED";
   const isDeleted = Boolean(booking.deletedAt);
-  const canCancel = canManageBooking && !isDeleted && ["PAYMENT_PENDING", "CONFIRMED", "PAID", "PENDING", "WAITLISTED", "WAITLIST_OFFERED"].includes(booking.status);
+  // Issue #1313 (option A2): a Booking Officer (bookings:edit) may cancel any
+  // booking; the /api/bookings/[id]/cancel route authorizes bookings:edit and the
+  // notes editor below is gated on this same predicate.
+  const canCancel = (canManageBooking || canAdminEditBookings) && !isDeleted && ["PAYMENT_PENDING", "CONFIRMED", "PAID", "PENDING", "WAITLISTED", "WAITLIST_OFFERED"].includes(booking.status);
   const showArrivalTime = !isDeleted && !["CANCELLED", "COMPLETED"].includes(booking.status);
   const modules = await loadEffectiveModuleFlags();
   const bookingMessages = await loadPublicBookingMessages();
@@ -350,7 +358,10 @@ export default async function BookingDetailPage({
     checkIn: booking.checkIn,
     checkOut: booking.checkOut,
   });
-  const canModify = canManageBooking && !isDeleted && editPolicy.canModify;
+  // Issue #1313 (option A2): a Booking Officer (bookings:edit) resolves to ADMIN
+  // in viewerAuthorizationRole above, so editPolicy is the admin-on-behalf policy
+  // and this predicate admits them exactly as the widened modify route does.
+  const canModify = (canManageBooking || canAdminEditBookings) && !isDeleted && editPolicy.canModify;
   const canEditRequestedRoom = isDeleted
     ? false
     : isAdmin
@@ -900,7 +911,7 @@ export default async function BookingDetailPage({
             <ArrivalTimeEditor
               bookingId={booking.id}
               initialTime={booking.expectedArrivalTime}
-              canEdit={canManageBooking && editPolicy.mode === "future"}
+              canEdit={(canManageBooking || canAdminEditBookings) && editPolicy.mode === "future"}
             />
           </CardContent>
         </Card>
@@ -1179,7 +1190,7 @@ export default async function BookingDetailPage({
         <CancelBookingButton
           bookingId={booking.id}
           refundAppealDescription={refundAppealDescription}
-          onBehalfOfMember={actingAsAdmin}
+          onBehalfOfMember={actingOnBehalf}
         />
       )}
 
