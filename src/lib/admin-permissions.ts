@@ -137,6 +137,7 @@ const ROUTE_AREA_PREFIXES: Array<{
   {
     area: "finance",
     prefixes: [
+      "/admin/integrations",
       "/admin/xero",
       "/admin/payments",
       "/admin/internet-banking",
@@ -157,6 +158,7 @@ const ROUTE_AREA_PREFIXES: Array<{
   {
     area: "bookings",
     prefixes: [
+      "/admin/bookings-setup",
       "/admin/bookings",
       "/admin/booking-requests",
       "/admin/book",
@@ -173,6 +175,7 @@ const ROUTE_AREA_PREFIXES: Array<{
       "/api/admin/booking-reviews",
       "/api/admin/booking-change-requests",
       "/api/admin/bed-allocation",
+      "/api/admin/occupancy",
       "/api/admin/waitlist",
       "/api/admin/booking-policies",
       "/api/admin/seasons",
@@ -183,6 +186,7 @@ const ROUTE_AREA_PREFIXES: Array<{
   {
     area: "membership",
     prefixes: [
+      "/admin/membership-setup",
       "/admin/members",
       "/admin/member-applications",
       "/admin/membership-cancellation",
@@ -240,6 +244,7 @@ const ROUTE_AREA_PREFIXES: Array<{
   {
     area: "content",
     prefixes: [
+      "/admin/appearance",
       "/admin/page-content",
       "/admin/site-banners",
       "/admin/site-content",
