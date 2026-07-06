@@ -23,6 +23,7 @@ import {
 import { memberName } from "@/lib/member-serialization"
 import { accessRoleLabelForToken } from "@/lib/access-role-definitions"
 import { useAccessRoleOptions } from "@/hooks/use-access-role-options"
+import { formatAgeTierName } from "@/lib/use-age-tier-options"
 import type { Member } from "../_types"
 import { subscriptionStatusConfig } from "../_utils"
 
@@ -275,7 +276,7 @@ export function MemberTable({
                 </TableCell>
                 <TableCell>
                   <span className="text-sm text-slate-600">
-                    {member.ageTier.charAt(0) + member.ageTier.slice(1).toLowerCase()}
+                    {formatAgeTierName(member.ageTier)}
                   </span>
                 </TableCell>
                 <TableCell>
