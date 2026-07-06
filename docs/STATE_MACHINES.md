@@ -281,6 +281,15 @@ actor:
   `convertedBookingId` idempotency replay (#1232 double-accept) keeps returning the
   one existing booking.
 
+**Lock-ordering invariant (#1423):** every transaction that writes both a
+`BookingRequest` row and its `BookingRequestQuote` row(s) — the decline claim +
+quote retirement, quote create, quote send, and the requester cancel /
+modify / query — must lock the `BookingRequest` row FIRST, then the quote row(s).
+Decline is claim-first and cannot swap, so all the others match its order; a
+mismatched order lets a concurrent decline deadlock them (Postgres `40P01`), which
+would surface as an unhandled `500` instead of a clean `409`. Preserve this order
+when editing these paths.
+
 As of #1385 the manual **Hold slots** admin UI entry is hidden on the generic
 (non-SCHOOL) quote flow: auto-hold-on-send (#1280) reserves the beds across the
 whole quote lifecycle, so a separate manual hold there is redundant and confusing.

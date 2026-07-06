@@ -648,6 +648,11 @@ describe("public quote response", () => {
       ],
       bookingRequest: baseRequest({ heldBookingId: "held-1" }),
     } as never);
+    // #1423: the request status update is now a status-guarded updateMany that
+    // runs FIRST (lock BookingRequest before the quote); a live request claims it.
+    vi.mocked(prisma.bookingRequest.updateMany).mockResolvedValue({
+      count: 1,
+    } as never);
 
     const result = await respondToBookingRequestQuote({ token, action: "CANCEL" });
 
@@ -666,6 +671,42 @@ describe("public quote response", () => {
     expect(prisma.bookingRequest.update).toHaveBeenCalledWith(
       expect.objectContaining({ data: { heldBookingId: null } })
     );
+  });
+
+  it("409s a CANCEL on an already-finalised request and touches neither quote nor hold (#1423)", async () => {
+    // In-flight window: the requester POST loaded the quote as SENT a moment
+    // before a concurrent admin decline finalised the request (and released its
+    // hold). The status-guarded claim (notIn [DECLINED, CANCELLED, CONVERTED,
+    // APPROVED]) claims nothing, so CANCEL must not overwrite DECLINED -> CANCELLED
+    // nor re-touch the hold.
+    const token = "k".repeat(64);
+    vi.mocked(prisma.bookingRequestQuote.findUnique).mockResolvedValue({
+      id: "quote-1",
+      bookingRequestId: "req-1",
+      version: 1,
+      status: BookingRequestQuoteStatus.SENT,
+      createdByMemberId: "admin-1",
+      responseTokenExpiresAt: new Date(Date.now() + 60_000),
+      options: [],
+      bookingRequest: baseRequest({
+        status: BookingRequestStatus.DECLINED,
+        heldBookingId: "held-1",
+      }),
+    } as never);
+    // The request is already finalised: the guarded claim matches nothing.
+    vi.mocked(prisma.bookingRequest.updateMany).mockResolvedValue({
+      count: 0,
+    } as never);
+
+    await expect(
+      respondToBookingRequestQuote({ token, action: "CANCEL" })
+    ).rejects.toMatchObject({ status: 409 });
+
+    // Neither the quote nor the hold is touched.
+    expect(prisma.bookingRequestQuote.update).not.toHaveBeenCalled();
+    expect(prisma.booking.update).not.toHaveBeenCalled();
+    expect(mockedReconcile).not.toHaveBeenCalled();
+    expect(prisma.bookingRequest.update).not.toHaveBeenCalled();
   });
 
   it("accepts a quote through the existing general conversion path", async () => {
