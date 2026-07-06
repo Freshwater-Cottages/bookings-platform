@@ -236,9 +236,11 @@ The `two-factor` module is already enabled for the run by
 #1315 after a stable green window on `main`). Check the job log and the uploaded
 `playwright-report` artifact when it goes red.
 
-Note on scope: `main` is not branch-protected, so a red E2E run is an honest
-failing signal but does not itself hard-block a merge. Making E2E a required
-status that blocks merges is a separate branch-protection setting.
+Note on scope: `main` is branch-protected and `Playwright E2E` is one of the
+required status checks, so a red E2E run hard-blocks a (non-admin) merge.
+Because `enforce_admins` is off and no review approval is required, an admin
+merge can still occasionally land `main` red, so compare against `main`'s own
+latest CI before assuming an unrelated failure is yours.
 
 The Stripe payment specs remain an environment dependency: they run only when
 the `STRIPE_TEST_SECRET_KEY` / `STRIPE_TEST_PUBLISHABLE_KEY` repository secrets
