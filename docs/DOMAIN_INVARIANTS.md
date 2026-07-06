@@ -361,6 +361,19 @@ replays rather than repeats. The mirror of this rule is the group-cancel
 settlement, which persists its per-child `refundPlan` before its Stripe refund
 for the same reason.
 
+For `source: STRIPE` payments the local refund ledger is Stripe-truth and
+inbound Xero reconciliation may only raise it, never lower it (#1353). The
+inbound credit-note repair keeps the local `refundedAmountCents` when the
+Xero-derived total is below it (logging and raising the deduped Xero sync
+alert instead of rewriting), and never flips a REFUNDED/PARTIALLY_REFUNDED
+Stripe payment back to SUCCEEDED from Xero-derived data — an operator voiding
+a refund credit note in Xero cannot "un-refund" money Stripe has already paid
+out, and a missing refund-delta credit note can no longer silently lower the
+ledger the missing-credit-note detector compares against (which previously
+self-masked the divergence). Internet Banking payments are the deliberate
+exception: Xero is their payment rail, so the repair remains authoritative in
+both directions for them.
+
 Cancelled-booking soft-delete may hide an operational duplicate only when it
 preserves the booking row and no external money/Xero history needs to remain
 operator-visible by default. Balanced internal modification deltas that net to
