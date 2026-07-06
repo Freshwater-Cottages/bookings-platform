@@ -408,11 +408,13 @@ Xero contact-group rules, and committee assignment are separate axes:
   runtime finance access.
 - `MembershipType` stores admin-configurable seasonal categories and policy:
   Full, Associate (renameable, including Reserve naming), Life, School,
-  Non-Member, Family, or club-created types. Each type carries booking behavior
-  (`MEMBER_RATE`, `NON_MEMBER_RATE`, `BLOCK_BOOKING`), subscription behavior
-  (`REQUIRED`, `NOT_REQUIRED`), allowed age tiers, and optional Xero
-  contact-group rules. Display names must be unique: creating or renaming a
-  type to a case-insensitive exact match of an existing name is rejected.
+  Non-Member, Family, or club-created types. The `/admin/membership-types`
+  page shows these as a compact ordered list; creating or editing a type opens
+  a dedicated editor for identity fields, booking behavior (`MEMBER_RATE`,
+  `NON_MEMBER_RATE`, `BLOCK_BOOKING`), subscription behavior (`REQUIRED`,
+  `NOT_REQUIRED`), allowed age tiers, and optional Xero contact-group rules.
+  Display names must be unique: creating or renaming a type to a
+  case-insensitive exact match of an existing name is rejected.
 - `AgeTierSetting` remains separate because a member can be Adult Full, Adult
   Life, Adult Associate, Child Family, Youth School, and so on. Age tiers still
   drive age-based rates and age-based default Xero grouping. Use Age Tier Xero
@@ -432,9 +434,10 @@ Xero contact-group rules, and committee assignment are separate axes:
   Existing future bookings are not automatically repriced by changing the type
   or `applyFrom` date. Production preview tokens require `AUTH_SECRET` or
   `NEXTAUTH_SECRET`; setup readiness blocks when neither secret is configured.
-- `/admin/membership-types` includes an idempotent roll-forward tool that copies
-  missing assignments from one season to another while leaving existing target
-  assignments unchanged and flagging missing or inactive-type exceptions.
+- `/admin/membership-types` includes a separate idempotent roll-forward section
+  that previews and then copies missing assignments from one season to another
+  while leaving existing target assignments unchanged and flagging missing or
+  inactive-type exceptions.
 - Committee assignment remains public/contact metadata and does not grant app
   access.
 
@@ -590,6 +593,17 @@ and the `two-factor-code` email template is marked sensitive so rendered code
 content is not retained in email logs. Recovery codes are generated on
 enrollment and profile regeneration, shown once, hashed at rest, and consumed
 once.
+
+> **Operational note — rotating `AUTH_SECRET`/`NEXTAUTH_SECRET` is a planned
+> event, not a casual credential refresh.** Because members' TOTP secrets and
+> recovery-code hashes are bound to key material derived from the secret,
+> rotating it **invalidates every member's enrolled authenticator and recovery
+> codes at once** — on their next sign-in each member is forced back through
+> two-factor enrollment. Schedule rotation as a maintenance action with advance
+> member communication and a support plan for anyone who cannot immediately
+> re-enroll (e.g. members who no longer have their authenticator device); never
+> rotate ad hoc. Short-lived email one-time codes are unaffected (re-issued per
+> attempt).
 
 Invalid two-factor attempts are rate-limited and tracked per member. Five
 invalid app, email, or recovery-code attempts lock the two-factor challenge for

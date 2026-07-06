@@ -164,10 +164,11 @@ approval, Xero, settings, and status-label flow.
 
 The source of truth is `prisma/schema.prisma`. Key domains are:
 
-- Members, family groups, dependent relationships, nominations, membership
-  cancellation requests, setup invites, password/email tokens, two-factor
-  enrollment state, hashed email OTP/recovery-code rows, notification
-  preferences, deletion requests, and audit logs.
+- Members, family groups, hidden family-suggestion member sets, dependent
+  relationships, nominations, membership cancellation requests, setup invites,
+  password/email tokens, two-factor enrollment state, hashed email
+  OTP/recovery-code rows, notification preferences, deletion requests, and
+  audit logs.
 - Seasons, season rates, booking periods, minimum-stay policies, group
   discounts, age-tier settings, promo codes, fixed-nightly promo adjustments,
   and promo redemptions.
@@ -439,15 +440,17 @@ new address (`hasPrivilegedAccess` in `src/lib/access-roles.ts`).
 Seasonal membership types are policy records, not access roles. `MembershipType`
 stores the stable identifier, display text, active/archive state, sort order,
 booking behavior, subscription behavior, allowed age tiers, and optional Xero
-contact-group rules for built-in and admin-defined types. The built-ins are
-Full, Associate, Life, School, Non-Member, and Family; Associate is the single
-Associate/Reserve-style built-in and can be renamed by the club. Create and
-rename requests that would duplicate another type's display name
-(case-insensitive exact match) are rejected with a 409. Age tiers stay
-separate because the same tier can appear under several membership types. Age
-Tier Xero groups are for broad age cohorts, Membership Type Xero groups are for
-status or policy labels, and clubs can configure both when Xero needs both
-labels.
+contact-group rules for built-in and admin-defined types. The admin settings
+page presents types as an ordered policy list; create/edit opens a dedicated
+editor for identity, behavior, allowed tiers, and Xero rule configuration, while
+seasonal assignment roll-forward sits in its own preview/run section. The
+built-ins are Full, Associate, Life, School, Non-Member, and Family; Associate
+is the single Associate/Reserve-style built-in and can be renamed by the club.
+Create and rename requests that would duplicate another type's display name
+(case-insensitive exact match) are rejected with a 409. Age tiers stay separate
+because the same tier can appear under several membership types. Age Tier Xero
+groups are for broad age cohorts, Membership Type Xero groups are for status or
+policy labels, and clubs can configure both when Xero needs both labels.
 `SeasonalMembershipAssignment` records a member's type for a membership
 `seasonYear`, assignment source, and optional date-only `applyFrom` changeover.
 The initial backfill maps existing legacy roles to current-season assignments.
