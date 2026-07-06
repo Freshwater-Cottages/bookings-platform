@@ -3,14 +3,18 @@ import { BookingStatus, Prisma } from "@prisma/client";
 import {
   buildFirstFitBedAllocationPlan,
   type BedAllocationBooking,
+  type BedAllocationDisplacement,
   type BedAllocationRoom,
 } from "@/lib/bed-allocation";
+import { createAuditLog } from "@/lib/audit";
+import { bookingHoldsCapacity } from "@/lib/booking-status";
 import {
   addDaysDateOnly,
   eachDateOnlyInRange,
   formatDateOnly,
 } from "@/lib/date-only";
 import { isEffectiveModuleEnabled } from "@/lib/admin-modules";
+import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 
 type BedAllocationLifecycleDb = Prisma.TransactionClient | typeof prisma;
@@ -249,6 +253,10 @@ async function autoAllocateMissingBedNights({
         id: true,
         createdAt: true,
         requestedRoomId: true,
+        // #1387: classify each booking Held vs Provisional so the planner can
+        // give capacity-holding bookings first claim on beds.
+        status: true,
+        originBookingRequest: { select: { id: true } },
         guests: {
           where: {
             stayStart: { lt: range.checkOut },
@@ -280,6 +288,14 @@ async function autoAllocateMissingBedNights({
         bookingGuestId: true,
         roomId: true,
         stayDate: true,
+        // #1387: classify each occupied bed-night Held vs Provisional so the
+        // planner never displaces a capacity-holding occupant.
+        booking: {
+          select: {
+            status: true,
+            originBookingRequest: { select: { id: true } },
+          },
+        },
         bookingGuest: {
           select: {
             ageTier: true,
@@ -297,7 +313,7 @@ async function autoAllocateMissingBedNights({
   );
 
   const plannerBookings: BedAllocationBooking[] = bookings
-    .map((booking) => {
+    .map((booking): BedAllocationBooking | null => {
       const guests: BedAllocationBooking["guests"] = [];
 
       for (const guest of booking.guests) {
@@ -325,6 +341,10 @@ async function autoAllocateMissingBedNights({
             id: booking.id,
             createdAt: booking.createdAt,
             requestedRoomId: booking.requestedRoomId,
+            holdsCapacity: bookingHoldsCapacity({
+              status: booking.status,
+              isRequestConverted: Boolean(booking.originBookingRequest),
+            }),
             guests,
           }
         : null;
@@ -351,6 +371,10 @@ async function autoAllocateMissingBedNights({
 
   const plan = buildFirstFitBedAllocationPlan({
     enabled: true,
+    // #1387: capacity-holding bookings get first claim; a blocking provisional
+    // allocation is moved aside or unallocated so a held booking always gets a
+    // bed the availability math already admitted it to.
+    prioritizeCapacityHolding: true,
     rooms: plannerRooms,
     bookings: plannerBookings,
     occupiedBedNights: existingAllocations.map((allocation) => ({
@@ -360,11 +384,44 @@ async function autoAllocateMissingBedNights({
       roomId: allocation.roomId,
       stayDate: allocation.stayDate,
       ageTier: allocation.bookingGuest.ageTier,
+      holdsCapacity: allocation.booking
+        ? bookingHoldsCapacity({
+            status: allocation.booking.status,
+            isRequestConverted: Boolean(
+              allocation.booking.originBookingRequest,
+            ),
+          })
+        : false,
     })),
   });
 
   if (plan.allocations.length === 0) {
     return 0;
+  }
+
+  // Apply displacements BEFORE creating the new capacity-holding allocations so
+  // the freed beds are available and no transient @@unique([bedId, stayDate])
+  // conflict occurs (issue #1387). A MOVE relocates the provisional row; an
+  // UNALLOCATE deletes it (its guest-night returns to the awaiting queue).
+  const displacements = plan.displacements ?? [];
+  for (const displacement of displacements) {
+    const where = {
+      bookingGuestId_stayDate: {
+        bookingGuestId: displacement.bookingGuestId,
+        stayDate: new Date(`${displacement.stayDate}T00:00:00.000Z`),
+      },
+    };
+    if (displacement.type === "MOVE" && displacement.toBedId && displacement.toRoomId) {
+      await db.bedAllocation.update({
+        where,
+        data: {
+          bedId: displacement.toBedId,
+          roomId: displacement.toRoomId,
+        },
+      });
+    } else {
+      await db.bedAllocation.delete({ where });
+    }
   }
 
   const created = await db.bedAllocation.createMany({
@@ -379,7 +436,54 @@ async function autoAllocateMissingBedNights({
     skipDuplicates: true,
   });
 
+  // Audit trail: record each displacement on the displaced PROVISIONAL booking
+  // once the plan has been applied. Swallow failures so a booking reconcile is
+  // never undone purely because its audit write failed (issue #1387).
+  for (const displacement of displacements) {
+    await recordBedDisplacementAudit(db, displacement);
+  }
+
   return created.count;
+}
+
+async function recordBedDisplacementAudit(
+  db: BedAllocationLifecycleDb,
+  displacement: BedAllocationDisplacement,
+): Promise<void> {
+  const summary =
+    displacement.type === "MOVE"
+      ? `Auto-allocation moved this provisional booking's bed on ${displacement.stayDate} to another bed so a capacity-holding booking could claim it (issue #1387).`
+      : `Auto-allocation returned this provisional booking's bed on ${displacement.stayDate} to the awaiting-allocation queue so a capacity-holding booking could claim it (issue #1387).`;
+
+  try {
+    await createAuditLog(
+      {
+        action: "bed_allocation.provisional_displaced",
+        category: "lodge",
+        entityType: "Booking",
+        entityId: displacement.bookingId,
+        targetId: displacement.bookingId,
+        outcome: "success",
+        summary,
+        metadata: {
+          issue: 1387,
+          displacementType: displacement.type,
+          stayDate: displacement.stayDate,
+          displacedBookingId: displacement.bookingId,
+          displacedBookingGuestId: displacement.bookingGuestId,
+          fromBedId: displacement.fromBedId,
+          toBedId: displacement.toBedId ?? null,
+          displacedByBookingId: displacement.displacedByBookingId,
+        },
+      },
+      db,
+    );
+  } catch (err) {
+    logger.error(
+      { err, displacement },
+      "Failed to record bed displacement audit",
+    );
+  }
 }
 
 export async function reconcileBedAllocationsForBooking({
