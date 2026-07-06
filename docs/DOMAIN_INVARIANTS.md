@@ -512,20 +512,33 @@ the modification credit-note paths, and both the outbox enqueue and the
 executor refuse (skip, replay-safely) rather than gross-bill the fee. The
 booking-vs-Xero repair pass applies the same rule: it verifies supplementary
 invoices against the modification net and queues missing ones with the signed
-components. On the credit-note side the repair pass sizes by STORED evidence,
-never abs(net) (#1427): abs(net) is only an upper bound, because the primary
-path caps the credit at the policy-limited settlement the modification row
-cannot reconstruct. Queue actions and the amount-evidence expectation both
-prefer the enqueue-time operation payload (which also rebuilds the identical
-amount-embedding correlation key, so a requeue of a note that already reached
-Xero dedups instead of duplicating), then link metadata, then executed note
-totals — and the allocation is sized to the NOTE's evidenced amount. When no
-stored evidence exists and the payment has captured money, the repair pass
-emits a manual-review finding instead of auto-queueing abs(net) (a policy
-tier may have applied); auto-queueing abs(net) remains correct only for the
-no-captured-payment case, where the full delta is a pure bookkeeping
-correction (#1015). A pending or running credit-note operation surfaces as
-blocked rather than silence. The manual retry stack replays the operation's STORED amounts
+components. On the credit-note side the repair pass sizes by STORED evidence
+(#1427): abs(net) is only an upper bound, because the primary path caps the
+credit at the policy-limited settlement the modification row cannot
+reconstruct. Queue actions and the amount-evidence expectation prefer the
+OLDEST typed enqueue payload — the first enqueue is the primary-path
+settlement decision, and replaying it rebuilds the identical amount-embedding
+correlation key, so a requeue of a note that already reached Xero dedups
+instead of duplicating — then link metadata, then executed note totals, then
+(last resort) a bare legacy payload naming no queueType. Operation evidence
+is discriminated by the immutable `queueType` COLUMN (falling back to the
+payload for pre-#1347 rows — executors legitimately overwrite requestPayload
+at dispatch, stripping its queueType): an account-credit-note op beside the
+invoice-applied note (same entityType/operationType) never sizes, resolves
+as, blocks, or pollutes the mismatch evidence of the invoice-applied note. A
+stored amount outside (0, abs(net)] is ignored as inconsistent, so an
+over-sized note still flags against abs(net); the deliberate limit of
+evidence-first is that a wrongly-enqueued amount INSIDE the range reads as
+the app's recorded decision and reports clean — the alternative (flagging
+every non-abs(net) note) drowned real drift in a false positive on every
+policy-tiered booking. When no stored evidence exists and the payment has
+captured money (by aggregate status or a captured transaction row), BOTH the
+missing-note queue and the missing-allocation queue become manual-review
+findings instead of auto-applying abs(net); auto-queueing abs(net) remains
+correct only for the no-captured-payment case, where the full delta is a
+pure bookkeeping correction (#1015). A live-but-not-retryable credit-note or
+allocation operation surfaces as blocked rather than silence (and a
+FAILED-unretryable one says so, not "pending"). The manual retry stack replays the operation's STORED amounts
 first (the #1354 queued-payload-first rule): the Xero idempotency key embeds
 the amounts, so replaying the enqueued values keeps the retry deduplicable
 against the original attempt, preserves a policy-limited credit-note

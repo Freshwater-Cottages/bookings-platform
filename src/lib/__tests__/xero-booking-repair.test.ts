@@ -56,6 +56,7 @@ function makeOperation(overrides: Record<string, unknown> = {}) {
     status: "SUCCEEDED",
     idempotencyKey: null,
     correlationKey: null,
+    queueType: null,
     lastErrorCode: null,
     lastErrorMessage: null,
     requestPayload: null,
@@ -804,6 +805,139 @@ describe("runBookingXeroRepair", () => {
     });
   });
 
+  // #1427: executors overwrite requestPayload at dispatch — the executed
+  // account-credit op's payload becomes a bare document with NO queueType.
+  // The immutable queueType COLUMN must still keep it out of the
+  // invoice-applied note's resolution and evidence.
+  it("discriminates an EXECUTED account-credit note by its queueType column despite the overwritten payload (#1427)", async () => {
+    const booking = makeBooking({
+      modifications: [
+        {
+          id: "mod_exec_account",
+          bookingId: "booking_1",
+          modificationType: "GUEST_REMOVE",
+          priceDiffCents: -10000,
+          changeFeeCents: 0,
+          createdAt: new Date("2026-05-02T00:00:00Z"),
+        },
+      ],
+    });
+    const deps = createDependencies({
+      bookings: [booking],
+      operations: [
+        makeOperation({
+          id: "operation_exec_account",
+          entityType: "CREDIT_NOTE",
+          operationType: "CREATE",
+          localId: "mod_exec_account",
+          status: "SUCCEEDED",
+          xeroObjectType: "CREDIT_NOTE",
+          xeroObjectId: "cn_exec_account",
+          queueType: "MODIFICATION_ACCOUNT_CREDIT_NOTE",
+          // The executor replaced the enqueue payload with the raw Xero
+          // document — no queueType, no refundAmountCents.
+          requestPayload: {
+            creditNotes: [{ type: "ACCRECCREDIT", total: 20.0 }],
+          },
+        }),
+      ],
+    });
+
+    const report = await runBookingXeroRepair({
+      dependencies: deps,
+      scope: { all: true },
+    });
+
+    const bookingReport = report.passes[0].bookings[0];
+    expect(
+      bookingReport.actions.filter(
+        (candidate) => candidate.type === "QUEUE_CREDIT_NOTE_ALLOCATION"
+      )
+    ).toEqual([]);
+    const finding = bookingReport.findings.find(
+      (candidate) => candidate.code === "MISSING_MODIFICATION_CREDIT_NOTE"
+    );
+    expect(finding).toMatchObject({
+      severity: "manual_review",
+      safeToAutoApply: false,
+    });
+  });
+
+  // #1427: the executed invoice-applied note's overwritten payload keeps
+  // refundAmountCents — the column-vetted loose read must still recover it.
+  it("recovers the settlement from an EXECUTED invoice-applied note's overwritten payload (#1427)", async () => {
+    const booking = makeBooking({
+      modifications: [
+        {
+          id: "mod_exec_note",
+          bookingId: "booking_1",
+          modificationType: "GUEST_REMOVE",
+          priceDiffCents: -10000,
+          changeFeeCents: 0,
+          createdAt: new Date("2026-05-02T00:00:00Z"),
+        },
+      ],
+    });
+    const deps = createDependencies({
+      bookings: [booking],
+      links: [
+        {
+          id: "link_exec_note",
+          localModel: "BookingModification",
+          localId: "mod_exec_note",
+          xeroObjectType: "CREDIT_NOTE",
+          xeroObjectId: "cn_exec_note",
+          xeroObjectNumber: "CN-EXEC",
+          xeroObjectUrl: null,
+          role: "MODIFICATION_CREDIT_NOTE",
+          active: true,
+          metadata: null,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      ],
+      operations: [
+        makeOperation({
+          id: "operation_exec_note",
+          entityType: "CREDIT_NOTE",
+          operationType: "CREATE",
+          localId: "mod_exec_note",
+          status: "SUCCEEDED",
+          xeroObjectType: "CREDIT_NOTE",
+          xeroObjectId: "cn_exec_note",
+          queueType: "MODIFICATION_CREDIT_NOTE",
+          // Executor-overwritten shape: document + invoiceId +
+          // refundAmountCents, queueType key gone.
+          requestPayload: {
+            creditNotes: [{ type: "ACCRECCREDIT", total: 50.0 }],
+            invoiceId: "inv_primary",
+            refundAmountCents: 5000,
+          },
+        }),
+      ],
+    });
+
+    const report = await runBookingXeroRepair({
+      dependencies: deps,
+      scope: { all: true },
+    });
+
+    const bookingReport = report.passes[0].bookings[0];
+    expect(
+      bookingReport.findings.filter(
+        (finding) =>
+          finding.code === "XERO_AMOUNT_MISMATCH" &&
+          finding.details.xeroObjectId === "cn_exec_note"
+      )
+    ).toEqual([]);
+    const action = bookingReport.actions.find(
+      (candidate) => candidate.type === "QUEUE_CREDIT_NOTE_ALLOCATION"
+    );
+    expect(action).toMatchObject({
+      payload: { creditNoteId: "cn_exec_note", amountCents: 5000 },
+    });
+  });
+
   // #1427 (the #1356 third-arm rule): a pending/running credit-note
   // operation must surface as blocked instead of silence.
   it("surfaces a pending modification credit-note operation as blocked instead of staying silent (#1427)", async () => {
@@ -1113,7 +1247,10 @@ describe("runBookingXeroRepair", () => {
     ]);
   });
 
-  it("classifies missing allocations when a modification credit note exists without one", async () => {
+  // #1427: the note exists but nothing records its settlement and the
+  // payment captured money — allocating abs(net) against a possibly
+  // policy-limited note over-repairs the books, so a human confirms first.
+  it("routes a missing allocation to manual review when the note's settlement is unknown and money was captured (#1427)", async () => {
     const booking = makeBooking({
       modifications: [
         {
@@ -1152,12 +1289,520 @@ describe("runBookingXeroRepair", () => {
     });
 
     const bookingReport = report.passes[0].bookings[0];
-    expect(bookingReport.findings.map((finding) => finding.code)).toContain(
-      "MISSING_CREDIT_NOTE_ALLOCATION"
+    const finding = bookingReport.findings.find(
+      (candidate) => candidate.code === "MISSING_CREDIT_NOTE_ALLOCATION"
     );
-    expect(bookingReport.actions.map((action) => action.type)).toContain(
+    expect(finding).toMatchObject({
+      severity: "manual_review",
+      safeToAutoApply: false,
+    });
+    expect(bookingReport.actions.map((action) => action.type)).not.toContain(
       "QUEUE_CREDIT_NOTE_ALLOCATION"
     );
+  });
+
+  it("queues a missing allocation at abs(net) when the payment never captured money", async () => {
+    const booking = makeBooking({
+      payment: {
+        ...makeBooking().payment,
+        status: "PENDING",
+      },
+      modifications: [
+        {
+          id: "mod_3",
+          bookingId: "booking_1",
+          modificationType: "GUEST_REMOVE",
+          priceDiffCents: -4000,
+          changeFeeCents: 0,
+          createdAt: new Date("2026-05-02T00:00:00Z"),
+        },
+      ],
+    });
+    const deps = createDependencies({
+      bookings: [booking],
+      links: [
+        {
+          id: "link_credit_note",
+          localModel: "BookingModification",
+          localId: "mod_3",
+          xeroObjectType: "CREDIT_NOTE",
+          xeroObjectId: "cn_mod_3",
+          xeroObjectNumber: "CN-003",
+          xeroObjectUrl: null,
+          role: "MODIFICATION_CREDIT_NOTE",
+          active: true,
+          metadata: null,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      ],
+    });
+
+    const report = await runBookingXeroRepair({
+      dependencies: deps,
+      scope: { all: true },
+    });
+
+    const bookingReport = report.passes[0].bookings[0];
+    const action = bookingReport.actions.find(
+      (candidate) => candidate.type === "QUEUE_CREDIT_NOTE_ALLOCATION"
+    );
+    expect(action).toMatchObject({
+      safeToAutoApply: true,
+      payload: {
+        creditNoteId: "cn_mod_3",
+        amountCents: 4000,
+      },
+    });
+  });
+
+  // #1427 (B1): the resolved note's own enqueue payload outranks a later
+  // CANCELLED null-id attempt at a different amount — a retired mis-sized
+  // re-queue must neither flag the healthy note nor size its allocation.
+  it("prefers the resolved note's own payload over a newer cancelled attempt (#1427)", async () => {
+    const booking = makeBooking({
+      modifications: [
+        {
+          id: "mod_order",
+          bookingId: "booking_1",
+          modificationType: "GUEST_REMOVE",
+          priceDiffCents: -10000,
+          changeFeeCents: 0,
+          createdAt: new Date("2026-05-02T00:00:00Z"),
+        },
+      ],
+    });
+    const deps = createDependencies({
+      bookings: [booking],
+      links: [
+        {
+          id: "link_order_note",
+          localModel: "BookingModification",
+          localId: "mod_order",
+          xeroObjectType: "CREDIT_NOTE",
+          xeroObjectId: "cn_order",
+          xeroObjectNumber: "CN-ORDER",
+          xeroObjectUrl: null,
+          role: "MODIFICATION_CREDIT_NOTE",
+          active: true,
+          metadata: null,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      ],
+      operations: [
+        makeOperation({
+          id: "operation_order_original",
+          entityType: "CREDIT_NOTE",
+          operationType: "CREATE",
+          localId: "mod_order",
+          status: "SUCCEEDED",
+          xeroObjectType: "CREDIT_NOTE",
+          xeroObjectId: "cn_order",
+          createdAt: new Date("2026-05-02T10:00:00Z"),
+          requestPayload: {
+            queueType: "MODIFICATION_CREDIT_NOTE",
+            bookingId: "booking_1",
+            bookingModificationId: "mod_order",
+            refundAmountCents: 5000,
+          },
+        }),
+        makeOperation({
+          id: "operation_order_cancelled",
+          entityType: "CREDIT_NOTE",
+          operationType: "CREATE",
+          localId: "mod_order",
+          status: "CANCELLED",
+          xeroObjectType: "CREDIT_NOTE",
+          xeroObjectId: null,
+          createdAt: new Date("2026-05-02T10:05:00Z"),
+          requestPayload: {
+            queueType: "MODIFICATION_CREDIT_NOTE",
+            bookingId: "booking_1",
+            bookingModificationId: "mod_order",
+            refundAmountCents: 8000,
+          },
+        }),
+      ],
+    });
+
+    const report = await runBookingXeroRepair({
+      dependencies: deps,
+      scope: { all: true },
+    });
+
+    const bookingReport = report.passes[0].bookings[0];
+    // The 5000 note reads clean against its own payload.
+    expect(
+      bookingReport.findings.filter(
+        (finding) =>
+          finding.code === "XERO_AMOUNT_MISMATCH" &&
+          finding.details.xeroObjectId === "cn_order"
+      )
+    ).toEqual([]);
+    // And the missing allocation is sized from the note's payload, not the
+    // cancelled attempt and not abs(net).
+    const action = bookingReport.actions.find(
+      (candidate) => candidate.type === "QUEUE_CREDIT_NOTE_ALLOCATION"
+    );
+    expect(action).toMatchObject({
+      payload: { creditNoteId: "cn_order", amountCents: 5000 },
+    });
+  });
+
+  // #1427: a bare legacy payload (no queueType) still sizes the expectation
+  // as a last resort — it must not fall back to abs(net) and flag the note
+  // it itself describes.
+  it("sizes from a bare legacy payload instead of flagging the note against abs(net) (#1427)", async () => {
+    const booking = makeBooking({
+      modifications: [
+        {
+          id: "mod_legacy",
+          bookingId: "booking_1",
+          modificationType: "GUEST_REMOVE",
+          priceDiffCents: -4000,
+          changeFeeCents: 0,
+          createdAt: new Date("2026-05-02T00:00:00Z"),
+        },
+      ],
+    });
+    const deps = createDependencies({
+      bookings: [booking],
+      links: [
+        {
+          id: "link_legacy_note",
+          localModel: "BookingModification",
+          localId: "mod_legacy",
+          xeroObjectType: "CREDIT_NOTE",
+          xeroObjectId: "cn_legacy",
+          xeroObjectNumber: "CN-LEGACY",
+          xeroObjectUrl: null,
+          role: "MODIFICATION_CREDIT_NOTE",
+          active: true,
+          metadata: null,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      ],
+      operations: [
+        makeOperation({
+          id: "operation_legacy_note",
+          entityType: "CREDIT_NOTE",
+          operationType: "CREATE",
+          localId: "mod_legacy",
+          status: "SUCCEEDED",
+          xeroObjectType: "CREDIT_NOTE",
+          xeroObjectId: "cn_legacy",
+          requestPayload: { refundAmountCents: 3000 },
+        }),
+      ],
+    });
+
+    const report = await runBookingXeroRepair({
+      dependencies: deps,
+      scope: { all: true },
+    });
+
+    const bookingReport = report.passes[0].bookings[0];
+    expect(
+      bookingReport.findings.filter(
+        (finding) =>
+          finding.code === "XERO_AMOUNT_MISMATCH" &&
+          finding.details.xeroObjectId === "cn_legacy"
+      )
+    ).toEqual([]);
+    const action = bookingReport.actions.find(
+      (candidate) => candidate.type === "QUEUE_CREDIT_NOTE_ALLOCATION"
+    );
+    expect(action).toMatchObject({
+      payload: { creditNoteId: "cn_legacy", amountCents: 3000 },
+    });
+  });
+
+  // #1427: a PARTIAL account-credit-note op with no object id must not
+  // pollute the invoice-applied note's mismatch evidence.
+  it("keeps account-credit operation payloads out of the note's mismatch evidence (#1427)", async () => {
+    const booking = makeBooking({
+      modifications: [
+        {
+          id: "mod_pollute",
+          bookingId: "booking_1",
+          modificationType: "GUEST_REMOVE",
+          priceDiffCents: -10000,
+          changeFeeCents: 0,
+          createdAt: new Date("2026-05-02T00:00:00Z"),
+        },
+      ],
+    });
+    const deps = createDependencies({
+      bookings: [booking],
+      links: [
+        {
+          id: "link_pollute_note",
+          localModel: "BookingModification",
+          localId: "mod_pollute",
+          xeroObjectType: "CREDIT_NOTE",
+          xeroObjectId: "cn_pollute",
+          xeroObjectNumber: "CN-POLLUTE",
+          xeroObjectUrl: null,
+          role: "MODIFICATION_CREDIT_NOTE",
+          active: true,
+          metadata: null,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+        {
+          id: "link_pollute_allocation",
+          localModel: "BookingModification",
+          localId: "mod_pollute",
+          xeroObjectType: "ALLOCATION",
+          xeroObjectId: "alloc_pollute",
+          xeroObjectNumber: null,
+          xeroObjectUrl: null,
+          role: "MODIFICATION_CREDIT_NOTE_ALLOCATION",
+          active: true,
+          metadata: {
+            creditNoteId: "cn_pollute",
+            invoiceId: "inv_primary",
+            amountCents: 5000,
+          },
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      ],
+      operations: [
+        makeOperation({
+          id: "operation_pollute_note",
+          entityType: "CREDIT_NOTE",
+          operationType: "CREATE",
+          localId: "mod_pollute",
+          status: "SUCCEEDED",
+          xeroObjectType: "CREDIT_NOTE",
+          xeroObjectId: "cn_pollute",
+          requestPayload: {
+            queueType: "MODIFICATION_CREDIT_NOTE",
+            bookingId: "booking_1",
+            bookingModificationId: "mod_pollute",
+            refundAmountCents: 5000,
+          },
+        }),
+        makeOperation({
+          id: "operation_pollute_account",
+          entityType: "CREDIT_NOTE",
+          operationType: "CREATE",
+          localId: "mod_pollute",
+          status: "PARTIAL",
+          xeroObjectType: "CREDIT_NOTE",
+          xeroObjectId: null,
+          requestPayload: {
+            queueType: "MODIFICATION_ACCOUNT_CREDIT_NOTE",
+            bookingId: "booking_1",
+            paymentId: "payment_1",
+            bookingModificationId: "mod_pollute",
+            refundAmountCents: 2000,
+          },
+        }),
+      ],
+    });
+
+    const report = await runBookingXeroRepair({
+      dependencies: deps,
+      scope: { all: true },
+    });
+
+    expect(
+      report.passes[0].bookings[0].findings.filter(
+        (finding) => finding.code === "XERO_AMOUNT_MISMATCH"
+      )
+    ).toEqual([]);
+  });
+
+  // #1427 (C4): a SUCCEEDED account-credit-note op must not resolve as the
+  // invoice-applied note (its allocation against the primary invoice would
+  // double-count the credit) nor block the missing-note classification.
+  it("does not resolve or block on an account-credit note when the invoice-applied note is missing (#1427)", async () => {
+    const booking = makeBooking({
+      modifications: [
+        {
+          id: "mod_misresolve",
+          bookingId: "booking_1",
+          modificationType: "GUEST_REMOVE",
+          priceDiffCents: -10000,
+          changeFeeCents: 0,
+          createdAt: new Date("2026-05-02T00:00:00Z"),
+        },
+      ],
+    });
+    const deps = createDependencies({
+      bookings: [booking],
+      operations: [
+        makeOperation({
+          id: "operation_account_success",
+          entityType: "CREDIT_NOTE",
+          operationType: "CREATE",
+          localId: "mod_misresolve",
+          status: "SUCCEEDED",
+          xeroObjectType: "CREDIT_NOTE",
+          xeroObjectId: "cn_account_note",
+          requestPayload: {
+            queueType: "MODIFICATION_ACCOUNT_CREDIT_NOTE",
+            bookingId: "booking_1",
+            paymentId: "payment_1",
+            bookingModificationId: "mod_misresolve",
+            refundAmountCents: 2000,
+          },
+        }),
+      ],
+    });
+
+    const report = await runBookingXeroRepair({
+      dependencies: deps,
+      scope: { all: true },
+    });
+
+    const bookingReport = report.passes[0].bookings[0];
+    // No allocation of the account note against the primary invoice.
+    const allocationActions = bookingReport.actions.filter(
+      (candidate) => candidate.type === "QUEUE_CREDIT_NOTE_ALLOCATION"
+    );
+    expect(allocationActions).toEqual([]);
+    // The invoice-applied note is reported missing (manual review: captured
+    // payment, no invoice-applied evidence), not masked by a blocked finding.
+    const finding = bookingReport.findings.find(
+      (candidate) => candidate.code === "MISSING_MODIFICATION_CREDIT_NOTE"
+    );
+    expect(finding).toMatchObject({
+      severity: "manual_review",
+      safeToAutoApply: false,
+    });
+    expect(
+      bookingReport.findings.filter(
+        (candidate) => candidate.code === "BLOCKED_BY_XERO_OPERATION"
+      )
+    ).toEqual([]);
+  });
+
+  // #1427 third arm for allocations: a live-but-not-retryable allocation op
+  // blocks instead of minting a differently-sized sibling.
+  it("surfaces a pending allocation operation as blocked instead of re-queueing beside it (#1427)", async () => {
+    const booking = makeBooking({
+      modifications: [
+        {
+          id: "mod_alloc_pending",
+          bookingId: "booking_1",
+          modificationType: "GUEST_REMOVE",
+          priceDiffCents: -4000,
+          changeFeeCents: 0,
+          createdAt: new Date("2026-05-02T00:00:00Z"),
+        },
+      ],
+    });
+    const deps = createDependencies({
+      bookings: [booking],
+      links: [
+        {
+          id: "link_alloc_pending_note",
+          localModel: "BookingModification",
+          localId: "mod_alloc_pending",
+          xeroObjectType: "CREDIT_NOTE",
+          xeroObjectId: "cn_alloc_pending",
+          xeroObjectNumber: "CN-AP",
+          xeroObjectUrl: null,
+          role: "MODIFICATION_CREDIT_NOTE",
+          active: true,
+          metadata: null,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      ],
+      operations: [
+        makeOperation({
+          id: "operation_alloc_pending",
+          entityType: "ALLOCATION",
+          operationType: "ALLOCATE",
+          localId: "mod_alloc_pending",
+          status: "PENDING",
+          xeroObjectType: "ALLOCATION",
+          xeroObjectId: null,
+          requestPayload: {
+            queueType: "CREDIT_NOTE_ALLOCATION",
+            creditNoteId: "cn_alloc_pending",
+            invoiceId: "inv_primary",
+            amountCents: 4000,
+          },
+        }),
+      ],
+    });
+
+    const report = await runBookingXeroRepair({
+      dependencies: deps,
+      scope: { all: true },
+    });
+
+    const bookingReport = report.passes[0].bookings[0];
+    expect(bookingReport.actions.map((action) => action.type)).not.toContain(
+      "QUEUE_CREDIT_NOTE_ALLOCATION"
+    );
+    const blocked = bookingReport.findings.find(
+      (candidate) =>
+        candidate.code === "BLOCKED_BY_XERO_OPERATION" &&
+        candidate.details.operationId === "operation_alloc_pending"
+    );
+    expect(blocked).toMatchObject({
+      severity: "warning",
+      safeToAutoApply: false,
+    });
+  });
+
+  // #1427: a FAILED-unretryable blocking op must say so — not claim to be
+  // "pending or running".
+  it("labels a failed unretryable credit-note operation accurately in the blocked finding (#1427)", async () => {
+    const booking = makeBooking({
+      modifications: [
+        {
+          id: "mod_failed_note",
+          bookingId: "booking_1",
+          modificationType: "GUEST_REMOVE",
+          priceDiffCents: -3000,
+          changeFeeCents: 0,
+          createdAt: new Date("2026-05-02T00:00:00Z"),
+        },
+      ],
+    });
+    const deps = createDependencies({
+      bookings: [booking],
+      operations: [
+        makeOperation({
+          id: "operation_failed_note",
+          entityType: "CREDIT_NOTE",
+          operationType: "CREATE",
+          localId: "mod_failed_note",
+          status: "FAILED",
+          replayable: false,
+          xeroObjectType: "CREDIT_NOTE",
+          xeroObjectId: null,
+          requestPayload: {
+            queueType: "MODIFICATION_CREDIT_NOTE",
+            bookingId: "booking_1",
+            bookingModificationId: "mod_failed_note",
+            refundAmountCents: 3000,
+          },
+        }),
+      ],
+    });
+
+    const report = await runBookingXeroRepair({
+      dependencies: deps,
+      scope: { all: true },
+    });
+
+    const blocked = report.passes[0].bookings[0].findings.find(
+      (candidate) =>
+        candidate.code === "BLOCKED_BY_XERO_OPERATION" &&
+        candidate.details.operationId === "operation_failed_note"
+    );
+    expect(blocked).toMatchObject({ safeToAutoApply: false });
+    expect(blocked?.summary).toContain("cannot be auto-retried");
   });
 
   it("is idempotent on reruns once a missing supplementary invoice has been repaired", async () => {
