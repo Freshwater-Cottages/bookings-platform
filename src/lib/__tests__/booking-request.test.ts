@@ -66,6 +66,13 @@ vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
 
+// #1365: declineBookingRequest now releases a request's capacity hold via the
+// shared cancelBooking path. Mock it so the unit test asserts the call shape
+// and keeps the heavy real cancel module out of this test's graph.
+vi.mock("@/lib/booking-cancel", () => ({
+  cancelBooking: vi.fn(),
+}));
+
 vi.mock("bcryptjs", () => ({
   hash: vi.fn().mockResolvedValue("hashed-placeholder"),
 }));
@@ -89,6 +96,7 @@ import {
   sendBookingRequestDeclinedEmail,
 } from "@/lib/email";
 import { logAudit } from "@/lib/audit";
+import { cancelBooking } from "@/lib/booking-cancel";
 import { checkCapacityForGuestRanges } from "@/lib/capacity";
 import {
   assertNoBookingMemberNightConflicts,
@@ -124,6 +132,8 @@ const mockedSendApproved = vi.mocked(sendBookingRequestApprovedEmail);
 const mockedSendDeclined = vi.mocked(sendBookingRequestDeclinedEmail);
 const mockedLogAudit = vi.mocked(logAudit);
 const mockedAssertNoConflicts = vi.mocked(assertNoBookingMemberNightConflicts);
+const mockedBookingFindUnique = vi.mocked(prisma.booking.findUnique);
+const mockedCancelBooking = vi.mocked(cancelBooking);
 
 function memberNightConflictError() {
   return new BookingMemberNightConflictError([
@@ -504,6 +514,202 @@ describe("declineBookingRequest", () => {
     await expect(
       declineBookingRequest({ requestId: "req-1", adminMemberId: "admin-1" })
     ).rejects.toMatchObject({ status: 409 });
+  });
+
+  it("declining a request WITHOUT a hold never touches the cancel path (#1365)", async () => {
+    mockedFindUnique
+      .mockResolvedValueOnce(baseRequest({ status: BookingRequestStatus.PRICED }) as never)
+      .mockResolvedValueOnce(
+        baseRequest({ status: BookingRequestStatus.DECLINED }) as never
+      );
+    mockedUpdateMany.mockResolvedValue({ count: 1 } as never);
+
+    const updated = await declineBookingRequest({
+      requestId: "req-1",
+      adminMemberId: "admin-1",
+    });
+
+    expect(updated?.status).toBe(BookingRequestStatus.DECLINED);
+    expect(mockedCancelBooking).not.toHaveBeenCalled();
+    // No held-booking re-read either, since there is no hold to release.
+    expect(mockedBookingFindUnique).not.toHaveBeenCalled();
+  });
+
+  it("releases an AWAITING_REVIEW hold via the shared cancel path before declining (#1365)", async () => {
+    mockedFindUnique
+      .mockResolvedValueOnce(
+        baseRequest({
+          status: BookingRequestStatus.PRICED,
+          heldBookingId: "held-1",
+        }) as never
+      )
+      .mockResolvedValueOnce(
+        baseRequest({
+          status: BookingRequestStatus.DECLINED,
+          heldBookingId: null,
+        }) as never
+      );
+    mockedBookingFindUnique.mockResolvedValue({
+      id: "held-1",
+      status: BookingStatus.AWAITING_REVIEW,
+    } as never);
+    mockedCancelBooking.mockResolvedValue({
+      status: 200,
+      data: { success: true },
+    } as never);
+    mockedUpdateMany.mockResolvedValue({ count: 1 } as never);
+
+    const updated = await declineBookingRequest({
+      requestId: "req-1",
+      adminMemberId: "admin-1",
+      reason: "Fully booked",
+      ipAddress: "203.0.113.7",
+    });
+
+    // Reuses the shared cancel path (which detaches heldBookingId + frees the
+    // held beds — verified in booking-cancel's own tests) with the admin
+    // identity + client IP, and suppresses the requester's cancellation email.
+    expect(mockedCancelBooking).toHaveBeenCalledWith(
+      "held-1",
+      "admin-1",
+      "ADMIN",
+      "203.0.113.7",
+      "card",
+      { suppressCustomerNotification: true }
+    );
+    // The decline still lands: request flipped to DECLINED after the release.
+    expect(mockedUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: BookingRequestStatus.DECLINED }),
+      })
+    );
+    expect(updated?.status).toBe(BookingRequestStatus.DECLINED);
+  });
+
+  it("releases the hold for a SCHOOL request too (same path, no type branch) (#1365)", async () => {
+    mockedFindUnique
+      .mockResolvedValueOnce(
+        baseRequest({
+          type: "SCHOOL",
+          status: BookingRequestStatus.PRICED,
+          heldBookingId: "held-school-1",
+        }) as never
+      )
+      .mockResolvedValueOnce(
+        baseRequest({
+          type: "SCHOOL",
+          status: BookingRequestStatus.DECLINED,
+          heldBookingId: null,
+        }) as never
+      );
+    mockedBookingFindUnique.mockResolvedValue({
+      id: "held-school-1",
+      status: BookingStatus.AWAITING_REVIEW,
+    } as never);
+    mockedCancelBooking.mockResolvedValue({
+      status: 200,
+      data: { success: true },
+    } as never);
+    mockedUpdateMany.mockResolvedValue({ count: 1 } as never);
+
+    const updated = await declineBookingRequest({
+      requestId: "req-1",
+      adminMemberId: "admin-1",
+      ipAddress: "203.0.113.8",
+    });
+
+    expect(mockedCancelBooking).toHaveBeenCalledWith(
+      "held-school-1",
+      "admin-1",
+      "ADMIN",
+      "203.0.113.8",
+      "card",
+      { suppressCustomerNotification: true }
+    );
+    expect(updated?.status).toBe(BookingRequestStatus.DECLINED);
+  });
+
+  it("forwards a concurrent-accept 409 from the cancel path and does NOT decline (#1365)", async () => {
+    mockedFindUnique.mockResolvedValue(
+      baseRequest({
+        status: BookingRequestStatus.PRICED,
+        heldBookingId: "held-1",
+      }) as never
+    );
+    mockedBookingFindUnique.mockResolvedValue({
+      id: "held-1",
+      status: BookingStatus.AWAITING_REVIEW,
+    } as never);
+    mockedCancelBooking.mockResolvedValue({
+      status: 409,
+      error: "This booking was concurrently accepted or cancelled and can no longer be cancelled",
+    } as never);
+
+    await expect(
+      declineBookingRequest({
+        requestId: "req-1",
+        adminMemberId: "admin-1",
+        ipAddress: "203.0.113.7",
+      })
+    ).rejects.toMatchObject({ status: 409 });
+
+    // Consistency invariant: the request is NOT flipped to DECLINED while a
+    // just-accepted booking is live.
+    expect(mockedUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("aborts with 409 (no cancel) when the held booking is already accepted (#1365)", async () => {
+    mockedFindUnique.mockResolvedValue(
+      baseRequest({
+        status: BookingRequestStatus.PRICED,
+        heldBookingId: "held-1",
+      }) as never
+    );
+    // The requester accepted: the hold converted to PENDING (a live booking).
+    mockedBookingFindUnique.mockResolvedValue({
+      id: "held-1",
+      status: BookingStatus.PENDING,
+    } as never);
+
+    await expect(
+      declineBookingRequest({ requestId: "req-1", adminMemberId: "admin-1" })
+    ).rejects.toMatchObject({ status: 409 });
+
+    // Never cancel a just-accepted booking, and never flip the request.
+    expect(mockedCancelBooking).not.toHaveBeenCalled();
+    expect(mockedUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("detaches a stale held pointer and proceeds to decline (#1365)", async () => {
+    mockedFindUnique
+      .mockResolvedValueOnce(
+        baseRequest({
+          status: BookingRequestStatus.PRICED,
+          heldBookingId: "held-gone",
+        }) as never
+      )
+      .mockResolvedValueOnce(
+        baseRequest({
+          status: BookingRequestStatus.DECLINED,
+          heldBookingId: null,
+        }) as never
+      );
+    // The held booking no longer exists (already cancelled elsewhere).
+    mockedBookingFindUnique.mockResolvedValue(null as never);
+    mockedUpdateMany.mockResolvedValue({ count: 1 } as never);
+
+    const updated = await declineBookingRequest({
+      requestId: "req-1",
+      adminMemberId: "admin-1",
+    });
+
+    // Nothing to cancel; the stale pointer is detached, then the decline lands.
+    expect(mockedCancelBooking).not.toHaveBeenCalled();
+    expect(mockedUpdateMany).toHaveBeenCalledWith({
+      where: { id: "req-1", heldBookingId: "held-gone" },
+      data: { heldBookingId: null },
+    });
+    expect(updated?.status).toBe(BookingRequestStatus.DECLINED);
   });
 });
 
