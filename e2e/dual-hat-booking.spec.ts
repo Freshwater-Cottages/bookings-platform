@@ -76,7 +76,7 @@ test("a booking officer completes an on-behalf booking draft", async ({
     .first()
     .click();
 
-  await expect(page.getByText("Select Dates")).toBeVisible();
+  await expect(page.getByText("Select Dates", { exact: true })).toBeVisible();
   await selectCalendarDay(page, window.checkIn);
   await selectCalendarDay(page, window.checkOut);
 
