@@ -107,6 +107,9 @@ function toneVariant(tone: FinanceDashboardPageModel["syncStatus"]["tone"]) {
 export function FinanceDashboardClient({ model }: FinanceDashboardClientProps) {
   const [generatingPdf, setGeneratingPdf] = useState(false);
   const reportRef = useRef<HTMLDivElement>(null);
+  // Ratios picks its range client-side; sync health has no time window.
+  const hideRangeControls =
+    model.selection.view === "ratios" || model.selection.view === "sync-health";
 
   async function downloadPdf() {
     if (!reportRef.current) return;
@@ -205,7 +208,7 @@ export function FinanceDashboardClient({ model }: FinanceDashboardClientProps) {
                 ))}
               </select>
             </div>
-            {model.selection.view !== "ratios" ? (
+            {!hideRangeControls ? (
               <>
                 <div className="space-y-1.5">
                   <Label htmlFor="finance-range">Range</Label>
@@ -263,7 +266,7 @@ export function FinanceDashboardClient({ model }: FinanceDashboardClientProps) {
               </Button>
             </div>
 
-            {model.selection.view !== "ratios" ? (
+            {!hideRangeControls ? (
               <>
                 <div className="space-y-1.5">
                   <Label htmlFor="finance-from">From month</Label>
@@ -488,6 +491,14 @@ export function FinanceDashboardClient({ model }: FinanceDashboardClientProps) {
                           <p className="text-xs text-slate-500">
                             {item.detail}
                           </p>
+                        ) : null}
+                        {item.href ? (
+                          <a
+                            href={item.href}
+                            className="text-xs text-blue-600 hover:underline"
+                          >
+                            {item.linkLabel ?? "Open"}
+                          </a>
                         ) : null}
                       </div>
                       <p className="font-semibold text-slate-900">
