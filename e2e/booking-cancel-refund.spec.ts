@@ -51,6 +51,15 @@ test("member cancels a paid booking for account credit and the money outcome is 
   // Choose the account-credit refund method (native radio, value="credit"),
   // then confirm. Credit is deterministic and never calls Stripe.
   await memberPage.locator('input[type="radio"][value="credit"]').check();
+  // Wait for the selection to propagate into the preview BEFORE confirming — the
+  // summary label reads "Credit to account:" only while refundMethod==="credit"
+  // (cancel-booking-button.tsx). Without this the Confirm click can race the
+  // React state update and POST the default refundMethod:"card", which cancels
+  // via the card branch and renders the card-refund line instead of the credit
+  // line this spec asserts (the intermittent failure this guards against).
+  await expect(
+    memberPage.getByText("Credit to account:"),
+  ).toBeVisible();
   await memberPage
     .getByRole("button", { name: "Confirm Cancellation" })
     .click();
