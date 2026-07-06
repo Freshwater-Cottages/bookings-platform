@@ -959,7 +959,7 @@ export async function refundPaymentTransactions({
     const derived = buildRefundAllocationSlices(stripeTransactions, amountCents);
 
     if (amountCents > derived.totalRefundableCents) {
-      throw new Error("Refund amount exceeds captured Stripe payments");
+      throw new Error("Refund amount exceeds captured payments");
     }
 
     slices = derived.slices;
@@ -1064,7 +1064,7 @@ export async function applyLocalRefundAllocation({
   }, 0);
 
   if (amountCents > totalRefundableCents) {
-    throw new Error("Refund amount exceeds captured Stripe payments");
+    throw new Error("Refund amount exceeds captured payments");
   }
 
   let remainingAmountCents = amountCents;
