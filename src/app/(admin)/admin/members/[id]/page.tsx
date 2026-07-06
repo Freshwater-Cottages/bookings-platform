@@ -24,6 +24,7 @@ import { resolveInternalReturnPath } from "@/lib/internal-return-path";
 import { hasAccessRole, isFullAdmin } from "@/lib/access-roles";
 import { toast } from "sonner";
 import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback";
+import { useXeroStatus } from "@/hooks/use-xero-status";
 import { Accordion } from "@/components/ui/accordion";
 import { subscriptionStatusLabel } from "@/lib/status-colors";
 import { MemberDetailHeader } from "./_components/member-detail-header";
@@ -323,6 +324,7 @@ export default function MemberDetailPage({
     onValueChange: onSectionsChange,
     openSection,
   } = useCollapsibleMemberSections();
+  const { connected: xeroConnected } = useXeroStatus();
 
   const isAdultMember = member?.ageTier === "ADULT";
   const memberIsArchived = Boolean(member?.archivedAt);
@@ -504,6 +506,7 @@ export default function MemberDetailPage({
         isAdultMember={isAdultMember}
         memberIsArchived={memberIsArchived}
         pendingDeleteRequest={pendingDeleteRequest}
+        xeroConnected={xeroConnected}
         xeroPushing={xeroPushing}
         xeroUnlinking={xeroUnlinking}
         onOpenDependentDialog={openDependentDialog}
