@@ -593,6 +593,11 @@ export default function KioskPage() {
                               </span>
                             )}
                           </div>
+                          {booking.blockedFromCheckin && (
+                            <p className="mb-2 inline-block rounded-lg border border-red-700/50 bg-red-900/50 px-3 py-1 text-sm font-semibold text-red-200">
+                              Blocked from Check-In — see Booking Officer
+                            </p>
+                          )}
                           <div className="space-y-2">
                             {booking.guests.map((guest) => (
                               <div
@@ -614,11 +619,6 @@ export default function KioskPage() {
                                       {guest.ageTier}
                                     </span>
                                   </div>
-                                  {booking.blockedFromCheckin && (
-                                    <p className="mt-1 inline-block rounded-lg border border-red-700/50 bg-red-900/50 px-3 py-1 text-sm font-semibold text-red-200">
-                                      Blocked from Check-In — see Booking Officer
-                                    </p>
-                                  )}
                                   {guest.ageTier === "ADULT" && (
                                     <p className="text-sm text-slate-400 mt-1">
                                       {guest.phone
