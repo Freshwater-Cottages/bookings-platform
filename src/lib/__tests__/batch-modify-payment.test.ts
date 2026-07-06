@@ -1277,6 +1277,65 @@ describe("PUT /api/bookings/[id]/modify", () => {
     expect(tx.bookingGuest.update).not.toHaveBeenCalled();
   });
 
+  it("rejects the whole request atomically when one of two paid name edits is a swap (#1386)", async () => {
+    // A valid typo (g1: Jhon -> John) bundled with a swap (g2: Old Guest ->
+    // New Guest) must fail the entire request; neither guest may be renamed.
+    const booking = makeBooking({
+      hasNonMembers: true,
+      guests: [
+        {
+          id: "g1",
+          bookingId: "bk1",
+          firstName: "Jhon",
+          lastName: "Doe",
+          ageTier: "ADULT",
+          isMember: false,
+          memberId: null,
+          priceCents: 2500,
+        },
+        {
+          id: "g2",
+          bookingId: "bk1",
+          firstName: "Old",
+          lastName: "Guest",
+          ageTier: "ADULT",
+          isMember: false,
+          memberId: null,
+          priceCents: 2500,
+        },
+      ],
+    });
+    const tx = makeTx(booking);
+
+    mockTransaction.mockImplementation((fn: (innerTx: typeof tx) => unknown) =>
+      fn(tx)
+    );
+
+    const { PUT } = await import("@/app/api/bookings/[id]/modify/route");
+
+    const request = new NextRequest("http://localhost/api/bookings/bk1/modify", {
+      method: "PUT",
+      body: JSON.stringify({
+        guestUpdates: [
+          { guestId: "g1", firstName: "John", lastName: "Doe" },
+          { guestId: "g2", firstName: "New", lastName: "Guest" },
+        ],
+      }),
+    });
+
+    const response = await PUT(request, {
+      params: Promise.resolve({ id: "bk1" }),
+    });
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: expect.stringContaining("spelling corrections"),
+    });
+    // Atomic reject: neither the valid typo nor the swap is applied.
+    expect(tx.bookingGuest.update).not.toHaveBeenCalled();
+    expect(tx.bookingModification.create).not.toHaveBeenCalled();
+  });
+
   it("marks a payment-pending booking paid when a batch edit promo reduces the total to zero", async () => {
     const booking = makeBooking({
       status: "PAYMENT_PENDING",

@@ -14,7 +14,15 @@
 //   2. First name and last name each keep the SAME word/token count: a typo
 //      fixes letters, it never adds or removes a name part. This alone rejects
 //      "John" -> "Johnathan Smith".
-//   3. The Damerau-Levenshtein distance between the normalised FULL names
+//   3. No positionally-aligned token is a whole-token REPLACEMENT. A real typo
+//      keeps most of a token's characters, so for each aligned first-name and
+//      last-name token pair we reject when at least half of the longer token
+//      changed (edit distance * 2 >= max token length). This kills
+//      surname-family swaps like "David Ng" -> "David Wu" and "Ann Ho" ->
+//      "Ann Lo", and short given-name swaps, even when the overall distance is
+//      small — while still allowing real typos that preserve most letters
+//      ("Jhon" -> "John" keeps j/o/n, "Sara" -> "Sarah" keeps Sar).
+//   4. The Damerau-Levenshtein distance between the normalised FULL names
 //      (an adjacent-character transposition counts as a single edit) is at most
 //         min(2, floor(0.25 * lengthOfLongerNormalisedFullName))
 //      i.e. at most TWO edits, and never more than a quarter of the longer
@@ -26,10 +34,16 @@
 // REJECTS that (full-name distance 3 > 2), and rejects a full swap
 // ("John Smith" -> "Aroha Ngata") the same way.
 //
-// Residual accepted by design: two names that genuinely differ by <= 2 edits
-// (e.g. "Ann" <-> "Amy") are treated as the same person. That is the conscious
-// trade-off for allowing real typo fixes; the office remains the fallback for
-// anything wider, and the server records an audit row for every allowed fix.
+// IRREDUCIBLE RESIDUAL (accepted by design): a SINGLE-character change on a
+// token that keeps most of its letters is indistinguishable from a spelling
+// typo by string comparison, so short one-edit swaps such as "Kim" -> "Tim",
+// "Sam" -> "Pam", or "Rob" -> "Bob" are STILL accepted. On PAID/CONFIRMED
+// bookings the owner (booking.memberId === actor) can self-serve this, so it
+// cannot be closed in code. The mitigation is the audit trail: every allowed
+// post-payment fix writes a `GUEST_TYPO_FIX` BookingModification row (old->new
+// names, actor, time) that admins should periodically review. Tightening the
+// per-token and distance bounds above already removes the wider swaps
+// (Ng->Wu, Ho->Lo, Bob->Amy); the single-edit case is the remaining exposure.
 
 function normalizeNamePart(value: string): string {
   return value.trim().toLowerCase().replace(/\s+/g, " ");
@@ -37,6 +51,30 @@ function normalizeNamePart(value: string): string {
 
 function tokenCount(normalized: string): number {
   return normalized ? normalized.split(" ").length : 0;
+}
+
+/**
+ * True when any positionally-aligned token in the (already normalised) name
+ * part is a whole-token replacement rather than a typo — i.e. at least half of
+ * the longer token changed (edit distance * 2 >= max token length). The caller
+ * guarantees `prev` and `next` have the same token count. A real typo keeps
+ * most of a token's characters, so this flags surname-family swaps ("ng" ->
+ * "wu", "ho" -> "lo") and short given-name swaps ("bob" -> "amy") while leaving
+ * true typos ("jhon" -> "john", "sara" -> "sarah") untouched.
+ */
+function hasReplacedToken(prev: string, next: string): boolean {
+  const prevTokens = prev.split(" ");
+  const nextTokens = next.split(" ");
+  for (let i = 0; i < prevTokens.length; i++) {
+    const prevToken = prevTokens[i];
+    const nextToken = nextTokens[i];
+    const maxLen = Math.max(prevToken.length, nextToken.length);
+    if (maxLen === 0) continue;
+    if (2 * damerauLevenshtein(prevToken, nextToken) >= maxLen) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -104,6 +142,15 @@ export function isLikelyTypoCorrection(
     return false;
   }
   if (tokenCount(prevLastNorm) !== tokenCount(newLastNorm)) {
+    return false;
+  }
+
+  // Reject a whole-token replacement (a swap) even when the overall distance is
+  // small — e.g. "David Ng" -> "David Wu" or "Ann Ho" -> "Ann Lo".
+  if (
+    hasReplacedToken(prevFirstNorm, newFirstNorm) ||
+    hasReplacedToken(prevLastNorm, newLastNorm)
+  ) {
     return false;
   }
 

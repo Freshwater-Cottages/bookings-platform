@@ -105,6 +105,42 @@ describe("isLikelyTypoCorrection", () => {
     });
   });
 
+  describe("rejects whole-token (per-token) replacements even at small distance", () => {
+    it("rejects a two-letter surname swap (David Ng -> David Wu)", () => {
+      // Full-name distance 2 would pass the budget, but Ng -> Wu replaces the
+      // whole surname token (zero shared letters).
+      expect(isLikelyTypoCorrection("David", "Ng", "David", "Wu")).toBe(false);
+    });
+
+    it("rejects a single-letter surname swap on a 2-char token (Ann Ho -> Ann Lo)", () => {
+      // Ho -> Lo is one edit on a 2-char token: half the token changed, so it
+      // is treated as a replacement, not a typo.
+      expect(isLikelyTypoCorrection("Ann", "Ho", "Ann", "Lo")).toBe(false);
+    });
+
+    it("rejects a given-name swap sharing a surname (Bob Smith -> Amy Smith)", () => {
+      expect(isLikelyTypoCorrection("Bob", "Smith", "Amy", "Smith")).toBe(false);
+    });
+
+    it("still allows real typos that keep most of the token", () => {
+      expect(isLikelyTypoCorrection("Jhon", "Smith", "John", "Smith")).toBe(
+        true,
+      );
+      expect(isLikelyTypoCorrection("Sara", "Ng", "Sarah", "Ng")).toBe(true);
+      expect(isLikelyTypoCorrection("Jon", "Smith", "John", "Smith")).toBe(true);
+    });
+  });
+
+  describe("irreducible single-edit residual is still accepted (documented)", () => {
+    // A one-character change on a >=3-char token is indistinguishable from a
+    // typo by string comparison; accepted by design, mitigated by the audit row.
+    it("accepts Kim -> Tim, Sam -> Pam, Rob -> Bob", () => {
+      expect(isLikelyTypoCorrection("Kim", "Lee", "Tim", "Lee")).toBe(true);
+      expect(isLikelyTypoCorrection("Sam", "Lee", "Pam", "Lee")).toBe(true);
+      expect(isLikelyTypoCorrection("Rob", "Lee", "Bob", "Lee")).toBe(true);
+    });
+  });
+
   describe("threshold boundary behaviour", () => {
     it("rejects a three-edit change even on a long name (> 2 edits)", () => {
       // "aaaaaaaa bbbbbbbb" -> "cccaaaaa bbbbbbbb": 3 substitutions, distance 3,
