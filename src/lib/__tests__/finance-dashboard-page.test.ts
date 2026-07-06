@@ -4,6 +4,8 @@ import { FinanceSnapshotType } from "@prisma/client";
 const {
   mockBuildFinanceMonthlyPnlSummary,
   mockBuildFinanceMonthlyBalanceSeries,
+  mockBuildFinanceRatioMatrix,
+  mockBuildFinanceFinancialYearsPanelItems,
   mockBuildFinanceRevenueReconciliation,
   mockGetFinanceBookingMetrics,
   mockGetFinanceSyncDiagnosticsStatus,
@@ -14,6 +16,8 @@ const {
 } = vi.hoisted(() => ({
   mockBuildFinanceMonthlyPnlSummary: vi.fn(),
   mockBuildFinanceMonthlyBalanceSeries: vi.fn(),
+  mockBuildFinanceRatioMatrix: vi.fn(),
+  mockBuildFinanceFinancialYearsPanelItems: vi.fn(),
   mockBuildFinanceRevenueReconciliation: vi.fn(),
   mockGetFinanceBookingMetrics: vi.fn(),
   mockGetFinanceSyncDiagnosticsStatus: vi.fn(),
@@ -45,6 +49,11 @@ vi.mock("@/lib/finance-monthly-pnl", () => ({
 
 vi.mock("@/lib/finance-monthly-balance", () => ({
   buildFinanceMonthlyBalanceSeries: mockBuildFinanceMonthlyBalanceSeries,
+}));
+
+vi.mock("@/lib/finance-ratio-insights", () => ({
+  buildFinanceRatioMatrix: mockBuildFinanceRatioMatrix,
+  buildFinanceFinancialYearsPanelItems: mockBuildFinanceFinancialYearsPanelItems,
 }));
 
 vi.mock("@/lib/financial-year-server", () => ({
@@ -338,6 +347,36 @@ describe("finance dashboard page model", () => {
       mappedSummary(input.kind)
     );
     mockBuildFinanceMonthlyBalanceSeries.mockResolvedValue(balanceSeries());
+    mockBuildFinanceRatioMatrix.mockResolvedValue({
+      months: ["2026-05", "2026-06"],
+      provisionalMonths: [],
+      series: [
+        {
+          id: "total-income",
+          name: "Total income",
+          kind: "REVENUE",
+          isTotal: true,
+          valuesCents: [100_000, 80_000],
+        },
+        {
+          id: "cat-hut",
+          name: "Hut Fees",
+          kind: "REVENUE",
+          isTotal: false,
+          valuesCents: [100_000, 80_000],
+        },
+      ],
+      financialYearEndMonth: 3,
+      currentMonth: "2026-07",
+    });
+    mockBuildFinanceFinancialYearsPanelItems.mockReturnValue([
+      {
+        label: "Total income",
+        value: "$1,800",
+        detail: "FY2026 $0 · FY2025 $0",
+        emphasis: true,
+      },
+    ]);
     mockBuildFinanceRevenueReconciliation.mockResolvedValue({
       overallStatus: "TIES",
       periods: [
@@ -367,6 +406,7 @@ describe("finance dashboard page model", () => {
     "bookings",
     "revenue",
     "costs",
+    "ratios",
     "pricing-sensitivity",
     "working-capital",
     "cash",
@@ -378,9 +418,49 @@ describe("finance dashboard page model", () => {
     });
 
     expect(model.selection.view).toBe(view);
-    expect(model.cards.length).toBeGreaterThan(0);
+    if (view === "ratios") {
+      expect(model.ratios?.matrix.months.length).toBeGreaterThan(0);
+    } else {
+      expect(model.cards.length).toBeGreaterThan(0);
+      expect(model.ratios).toBeNull();
+    }
     expect(model.exportSections[0].title).toBe("Dashboard selection");
     expect(model.sourceNotes.length).toBeGreaterThan(0);
+  });
+
+  it("appends the financial-years committee panel to revenue and costs views", async () => {
+    const revenue = await buildFinanceDashboardPageModel({
+      member: financeManager(),
+      searchParams: { view: "revenue" },
+    });
+    const costs = await buildFinanceDashboardPageModel({
+      member: financeManager(),
+      searchParams: { view: "costs" },
+    });
+
+    for (const model of [revenue, costs]) {
+      const panel = model.statusPanels.find(
+        (statusPanel) => statusPanel.title === "Financial years"
+      );
+      expect(panel).toBeDefined();
+      expect(panel?.items[0]).toMatchObject({ label: "Total income" });
+    }
+  });
+
+  it("passes the ratio explorer selection through from query params", async () => {
+    const model = await buildFinanceDashboardPageModel({
+      member: financeManager(),
+      searchParams: {
+        view: "ratios",
+        ratioNumerator: "cat-catering",
+        ratioDenominator: "cat-hut",
+      },
+    });
+
+    expect(model.ratios).toMatchObject({
+      initialNumeratorId: "cat-catering",
+      initialDenominatorId: "cat-hut",
+    });
   });
 
   it("groups mapped P&L categories under subtype sub-headings with sub-totals", async () => {

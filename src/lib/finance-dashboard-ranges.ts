@@ -12,6 +12,7 @@ export const FINANCE_DASHBOARD_VIEWS = [
   "bookings",
   "revenue",
   "costs",
+  "ratios",
   "pricing-sensitivity",
   "working-capital",
   "cash",
@@ -63,6 +64,7 @@ export const FINANCE_DASHBOARD_VIEW_LABELS: Record<
   bookings: "Bookings",
   revenue: "Revenue",
   costs: "Costs",
+  ratios: "Ratios",
   "pricing-sensitivity": "Pricing Sensitivity",
   "working-capital": "Working Capital",
   cash: "Cash",
@@ -159,6 +161,9 @@ export interface FinanceDashboardSelection {
   financialYearEndMonth: number;
   expenseCategoryId: string | null;
   expenseLine: string | null;
+  /** Ratios-view explorer selection, for shareable links. */
+  ratioNumeratorId: string | null;
+  ratioDenominatorId: string | null;
   warnings: string[];
 }
 
@@ -548,6 +553,8 @@ export function resolveFinanceDashboardSelection(input: {
     financialYearEndMonth,
     expenseCategoryId: readParam(input.searchParams, "expenseCategoryId") ?? null,
     expenseLine: readParam(input.searchParams, "expenseLine") ?? null,
+    ratioNumeratorId: readParam(input.searchParams, "ratioNumerator") ?? null,
+    ratioDenominatorId: readParam(input.searchParams, "ratioDenominator") ?? null,
     warnings,
   };
 }

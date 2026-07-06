@@ -28,6 +28,14 @@ import {
   buildFinanceMonthlyPnlSummary,
   type FinanceMonthlyPnlSummary,
 } from "@/lib/finance-monthly-pnl";
+import {
+  buildFinanceFinancialYearsPanelItems,
+  buildFinanceRatioMatrix,
+} from "@/lib/finance-ratio-insights";
+import {
+  financeFinancialYearBuckets,
+  type FinanceRatioMatrix,
+} from "@/lib/finance-ratio-shared";
 import type { FinanceMappedPnlCategorySummary } from "@/lib/finance-report-mappings";
 import { buildFinanceRevenueReconciliation } from "@/lib/finance-revenue-reconciliation";
 import { refreshFinancialYearConfig } from "@/lib/financial-year-server";
@@ -113,10 +121,18 @@ export interface FinanceDashboardSyncStatus {
   lastSyncedAt: string | null;
 }
 
+export interface FinanceDashboardRatioExplorerModel {
+  matrix: FinanceRatioMatrix;
+  initialNumeratorId: string | null;
+  initialDenominatorId: string | null;
+}
+
 export interface FinanceDashboardPageModel {
   generatedOn: string;
   isManager: boolean;
   selection: FinanceDashboardSelection;
+  /** Present only on the Ratios view; drives the client-side explorer. */
+  ratios: FinanceDashboardRatioExplorerModel | null;
   selectionLabels: {
     view: string;
     range: string;
@@ -730,8 +746,115 @@ async function buildMappedPnlDashboard(input: {
   };
 }
 
+/**
+ * "Financial years" committee panel: per-category totals for this FY (YTD),
+ * last FY, and the FY before, appended to the revenue and costs views.
+ */
+async function appendFinancialYearsPanel(
+  viewModel: { statusPanels: FinanceDashboardStatusPanel[]; warnings: string[] },
+  selection: FinanceDashboardSelection,
+  kind: "REVENUE" | "EXPENSE"
+) {
+  try {
+    const matrix = await buildFinanceRatioMatrix({
+      financialYearEndMonth: selection.financialYearEndMonth,
+      currentMonth: selection.currentMonth,
+    });
+    if (matrix.months.length === 0) {
+      return;
+    }
+    const buckets = financeFinancialYearBuckets(matrix);
+    viewModel.statusPanels.push({
+      title: "Financial years",
+      description: `${buckets[0].label} vs ${buckets[1].label} and ${buckets[2].label} by group. Explore any pairing in the Ratios view.`,
+      items: buildFinanceFinancialYearsPanelItems({
+        matrix,
+        kind,
+        formatCents: formatDollarsDisplay,
+      }),
+    });
+  } catch {
+    viewModel.warnings.push("Financial-year comparison could not be loaded.");
+  }
+}
+
+async function buildRatiosDashboard(
+  selection: FinanceDashboardSelection
+): Promise<FinanceDashboardViewModel & { ratios: FinanceDashboardRatioExplorerModel }> {
+  const matrix = await buildFinanceRatioMatrix({
+    financialYearEndMonth: selection.financialYearEndMonth,
+    currentMonth: selection.currentMonth,
+  });
+  const buckets = financeFinancialYearBuckets(matrix);
+
+  return {
+    ratios: {
+      matrix,
+      initialNumeratorId: selection.ratioNumeratorId,
+      initialDenominatorId: selection.ratioDenominatorId,
+    },
+    cards: [],
+    trends: [],
+    mix: null,
+    statusPanels: [],
+    costFilters: null,
+    sourceNotes: [
+      {
+        label: "Ratio source",
+        description:
+          "Ratios divide stored monthly Xero account balances grouped by the treasurer's category mappings. Unmapped accounts are included in the totals series.",
+      },
+    ],
+    exportSections: [
+      {
+        title: "Category totals by financial year",
+        rows: matrix.series.map((series) => ({
+          Category: series.name,
+          Kind: series.kind,
+          [buckets[0].label]: formatCents(
+            buckets[0]
+              ? matrix.months.reduce(
+                  (total, month, index) =>
+                    month >= buckets[0].fromMonth && month <= buckets[0].toMonth
+                      ? total + (series.valuesCents[index] ?? 0)
+                      : total,
+                  0
+                )
+              : 0
+          ),
+          [buckets[1].label]: formatCents(
+            matrix.months.reduce(
+              (total, month, index) =>
+                month >= buckets[1].fromMonth && month <= buckets[1].toMonth
+                  ? total + (series.valuesCents[index] ?? 0)
+                  : total,
+              0
+            )
+          ),
+          [buckets[2].label]: formatCents(
+            matrix.months.reduce(
+              (total, month, index) =>
+                month >= buckets[2].fromMonth && month <= buckets[2].toMonth
+                  ? total + (series.valuesCents[index] ?? 0)
+                  : total,
+              0
+            )
+          ),
+        })),
+      },
+    ],
+    warnings:
+      matrix.months.length === 0
+        ? [
+            "No monthly Xero data is stored yet. Run the finance sync, or the monthly-facts backfill for older history.",
+          ]
+        : [],
+  };
+}
+
 async function buildRevenueDashboard(selection: FinanceDashboardSelection) {
   const mapped = await buildMappedPnlDashboard({ selection, kind: "REVENUE" });
+  await appendFinancialYearsPanel(mapped, selection, "REVENUE");
   try {
     const periods = Math.max(
       1,
@@ -1199,13 +1322,23 @@ export async function buildFinanceDashboardPageModel(input: {
   const labels = buildSelectionLabels(selection);
 
   let viewModel: FinanceDashboardViewModel;
+  let ratios: FinanceDashboardRatioExplorerModel | null = null;
 
   if (selection.view === "bookings") {
     viewModel = await buildBookingsDashboard(selection);
   } else if (selection.view === "revenue") {
     viewModel = await buildRevenueDashboard(selection);
   } else if (selection.view === "costs") {
-    viewModel = await buildMappedPnlDashboard({ selection, kind: "EXPENSE" });
+    const costsModel = await buildMappedPnlDashboard({
+      selection,
+      kind: "EXPENSE",
+    });
+    await appendFinancialYearsPanel(costsModel, selection, "EXPENSE");
+    viewModel = costsModel;
+  } else if (selection.view === "ratios") {
+    const ratiosModel = await buildRatiosDashboard(selection);
+    ratios = ratiosModel.ratios;
+    viewModel = ratiosModel;
   } else if (selection.view === "pricing-sensitivity") {
     viewModel = await buildPricingSensitivityDashboard(selection);
   } else if (selection.view === "cash") {
@@ -1226,6 +1359,7 @@ export async function buildFinanceDashboardPageModel(input: {
     generatedOn: formatDateTime(new Date()),
     isManager: hasFinanceManagerAccess(input.member),
     selection,
+    ratios,
     selectionLabels: labels,
     syncStatus: sync.status,
     warnings: [

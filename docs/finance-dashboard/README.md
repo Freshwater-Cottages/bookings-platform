@@ -80,6 +80,18 @@ the bookings view reads local booking/payment data. The cash view's "latest
 bank balance" KPI is the one figure still read from the daily bank-summary
 snapshot, since it is a point-in-time value rather than a monthly one.
 
+The **Ratios** view is the committee's comparison tool: a numerator dropdown
+(any treasurer category, or Total income/expenses), an "as a percentage of"
+denominator dropdown, and financial-year/range chips — e.g. catering cost as a
+share of hut-fee income for this FY, last FY, and the FY before. The server
+ships the full category-month matrix (`finance-ratio-insights.ts` /
+client-safe helpers in `finance-ratio-shared.ts`), so switching pairings or
+ranges recomputes instantly in the browser; the selection syncs to
+`ratioNumerator`/`ratioDenominator` query params for shareable links.
+Divide-by-zero renders as "—". The revenue and costs views carry a compact
+"Financial years" panel (this FY YTD vs the two prior FYs per group) that
+links conceptually to the same data.
+
 ## Data Model
 
 - Xero-derived accounting datasets are persisted as `FinanceSnapshot` rows.
