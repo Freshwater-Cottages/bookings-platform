@@ -113,6 +113,12 @@ export async function createXeroSupplementaryInvoice(params: {
   });
   const incomeMapping = await getResolvedAccountMapping("hutFeesIncome");
   const incomeCode = incomeMapping.code ?? "200";
+  // A negative price adjustment is a give-back, so it posts to the
+  // hutFeeRefunds mapping like the standalone-reduction credit-note path
+  // (owner decision on #1356): clubs that prefer a single account map
+  // hutFeeRefunds to the same code as hutFeesIncome in the Xero mapping.
+  const refundMapping =
+    priceDiffCents < 0 ? await getResolvedAccountMapping("hutFeeRefunds") : null;
 
   const lineItems: LineItem[] = [];
 
@@ -120,15 +126,17 @@ export async function createXeroSupplementaryInvoice(params: {
   // negative price line next to the positive fee line so the line items sum
   // exactly to the net charge by construction (the #1163 exact-total rule).
   if (priceDiffCents !== 0) {
+    const lineMapping = refundMapping ?? incomeMapping;
+    const lineCode = lineMapping.code ?? "200";
     const li: LineItem = {
       description: `Booking modification - price adjustment (Booking ${bookingId.slice(0, 8)})`,
       quantity: 1,
       unitAmount: priceDiffCents / 100,
       taxType: "OUTPUT2",
     };
-    if (incomeMapping.itemCode) li.itemCode = incomeMapping.itemCode;
-    if (!incomeMapping.itemCode || incomeCode !== "200" || incomeMapping.codeExplicitlyConfigured) {
-      li.accountCode = incomeCode;
+    if (lineMapping.itemCode) li.itemCode = lineMapping.itemCode;
+    if (!lineMapping.itemCode || lineCode !== "200" || lineMapping.codeExplicitlyConfigured) {
+      li.accountCode = lineCode;
     }
     lineItems.push(li);
   }

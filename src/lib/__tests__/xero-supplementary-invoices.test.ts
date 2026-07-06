@@ -177,11 +177,13 @@ describe("createXeroSupplementaryInvoice mixed-sign components (#1356)", () => {
       tenantId: "tenant_1",
     });
     mocks.findOrCreateXeroContact.mockResolvedValue("contact_1");
-    mocks.getResolvedAccountMapping.mockResolvedValue({
-      code: "200",
-      itemCode: undefined,
-      codeExplicitlyConfigured: false,
-    });
+    // Key-aware mapping: give-backs post to the hutFeeRefunds mapping (owner
+    // decision on #1356), income lines to hutFeesIncome.
+    mocks.getResolvedAccountMapping.mockImplementation(async (key: string) =>
+      key === "hutFeeRefunds"
+        ? { code: "201", itemCode: undefined, codeExplicitlyConfigured: true }
+        : { code: "200", itemCode: undefined, codeExplicitlyConfigured: false }
+    );
     mocks.getAccountMapping.mockResolvedValue("606");
     mocks.startXeroSyncOperation.mockResolvedValue({ id: "op_x" });
     mocks.completeXeroSyncOperation.mockResolvedValue(undefined);
@@ -211,8 +213,12 @@ describe("createXeroSupplementaryInvoice mixed-sign components (#1356)", () => {
     expect(lines).toHaveLength(2);
     expect(lines[0].description).toContain("price adjustment");
     expect(lines[0].unitAmount).toBe(-5);
+    // The give-back line posts to the hutFeeRefunds mapping; the fee stays on
+    // hutFeesIncome (clubs may map both to one code to collapse the split).
+    expect(lines[0].accountCode).toBe("201");
     expect(lines[1].description).toContain("change fee");
     expect(lines[1].unitAmount).toBe(10);
+    expect(lines[1].accountCode).toBe("200");
     expect(lineTotalCents(lines)).toBe(500);
     // The idempotency key carries the signed component, not a clamped zero.
     expect(enqueued.idempotencyKey).toBe(

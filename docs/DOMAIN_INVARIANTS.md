@@ -404,7 +404,10 @@ late-change fee bills Xero the SIGNED components on one supplementary invoice
 (#1356): a negative price-adjustment line beside the positive fee line, so the
 invoice total and the payment recorded against the Stripe clearing account
 both equal the net the member was actually charged — the same net the
-additional Stripe PaymentIntent captured. Clamping the negative component
+additional Stripe PaymentIntent captured. The negative line posts to the
+`hutFeeRefunds` account mapping, like every other give-back (a club that
+prefers a single ledger line maps `hutFeeRefunds` to the same code as
+`hutFeesIncome`); positive lines stay on `hutFeesIncome`. Clamping the negative component
 would over-record income and Stripe-bank receipts by the dropped reduction
 and break bank reconciliation. A supplementary invoice exists only for a
 positive net; a mixed-sign edit whose net is zero or negative settles through
