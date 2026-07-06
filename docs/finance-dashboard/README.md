@@ -94,6 +94,19 @@ Divide-by-zero renders as "—". The revenue and costs views carry a compact
 "Financial years" panel (this FY YTD vs the two prior FYs per group) that
 links conceptually to the same data.
 
+The **Xero Sync** view (`view=sync-health`) is the treasurer's
+sync-confidence page: one traffic light aggregating the health signals the
+platform already tracks — latest daily sync run, revenue reconciliation,
+Xero operation outbox (failed/pending writes, bookings missing invoices,
+refunds missing credit notes), and monthly fact freshness (latest sync time
+and newest finalised month per statement kind). Red means a sync failed in
+the last 24 hours, outbox operations have failed, or reconciliation does not
+tie; amber covers pending operations, staleness over 36 hours, a finished
+month still provisional-only, or an unavailable signal; green otherwise.
+Signals link to the Xero admin console or the setup mappings panel. The view
+is aggregation-only (`finance-sync-health.ts`) — it adds no sync logic and
+never calls Xero live — and has no range/compare selectors.
+
 ## Data Model
 
 - Xero-derived accounting datasets are persisted as `FinanceSnapshot` rows.
