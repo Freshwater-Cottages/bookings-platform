@@ -66,6 +66,13 @@ vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
 
+// #1365: declineBookingRequest now releases a request's capacity hold via the
+// shared cancelBooking path. Mock it so the unit test asserts the call shape
+// and keeps the heavy real cancel module out of this test's graph.
+vi.mock("@/lib/booking-cancel", () => ({
+  cancelBooking: vi.fn(),
+}));
+
 vi.mock("bcryptjs", () => ({
   hash: vi.fn().mockResolvedValue("hashed-placeholder"),
 }));
@@ -89,6 +96,7 @@ import {
   sendBookingRequestDeclinedEmail,
 } from "@/lib/email";
 import { logAudit } from "@/lib/audit";
+import { cancelBooking } from "@/lib/booking-cancel";
 import { checkCapacityForGuestRanges } from "@/lib/capacity";
 import {
   assertNoBookingMemberNightConflicts,
@@ -124,6 +132,8 @@ const mockedSendApproved = vi.mocked(sendBookingRequestApprovedEmail);
 const mockedSendDeclined = vi.mocked(sendBookingRequestDeclinedEmail);
 const mockedLogAudit = vi.mocked(logAudit);
 const mockedAssertNoConflicts = vi.mocked(assertNoBookingMemberNightConflicts);
+const mockedBookingFindUnique = vi.mocked(prisma.booking.findUnique);
+const mockedCancelBooking = vi.mocked(cancelBooking);
 
 function memberNightConflictError() {
   return new BookingMemberNightConflictError([
@@ -504,6 +514,254 @@ describe("declineBookingRequest", () => {
     await expect(
       declineBookingRequest({ requestId: "req-1", adminMemberId: "admin-1" })
     ).rejects.toMatchObject({ status: 409 });
+  });
+
+  it("declining a request WITHOUT a hold never touches the cancel path (#1365)", async () => {
+    mockedFindUnique
+      .mockResolvedValueOnce(baseRequest({ status: BookingRequestStatus.PRICED }) as never)
+      .mockResolvedValueOnce(
+        baseRequest({ status: BookingRequestStatus.DECLINED }) as never
+      );
+    mockedUpdateMany.mockResolvedValue({ count: 1 } as never);
+
+    const updated = await declineBookingRequest({
+      requestId: "req-1",
+      adminMemberId: "admin-1",
+    });
+
+    expect(updated?.status).toBe(BookingRequestStatus.DECLINED);
+    expect(mockedCancelBooking).not.toHaveBeenCalled();
+    // No held-booking re-read either, since there is no hold to release.
+    expect(mockedBookingFindUnique).not.toHaveBeenCalled();
+  });
+
+  it("does NOT decline a generic QUOTE_SENT held request and never touches its hold (#1365)", async () => {
+    // Regression guard (Blocker 1): after #1385 a generic held request is
+    // QUOTE_SENT (auto-hold-on-send #1280), NOT VERIFIED/PRICED, so this route
+    // must 409 WITHOUT touching the hold. Claim-first ordering guarantees a
+    // failed decline has no destructive side effect on the held booking.
+    mockedFindUnique.mockResolvedValue(
+      baseRequest({
+        status: BookingRequestStatus.QUOTE_SENT,
+        heldBookingId: "held-1",
+      }) as never
+    );
+    mockedUpdateMany.mockResolvedValue({ count: 0 } as never);
+
+    await expect(
+      declineBookingRequest({ requestId: "req-1", adminMemberId: "admin-1" })
+    ).rejects.toMatchObject({ status: 409 });
+
+    // Hold left completely intact: no held-booking read, no cancel, no detach.
+    expect(mockedCancelBooking).not.toHaveBeenCalled();
+    expect(mockedBookingFindUnique).not.toHaveBeenCalled();
+    expect(mockedUpdateMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: { heldBookingId: null } })
+    );
+  });
+
+  it("releases an AWAITING_REVIEW hold via the shared cancel path AFTER the decline claim (#1365)", async () => {
+    // A PRICED request carrying a SCHOOL-style manual hold: claim DECLINED
+    // first, then release the held booking via the shared cancel path.
+    mockedFindUnique
+      .mockResolvedValueOnce(
+        baseRequest({
+          status: BookingRequestStatus.PRICED,
+          heldBookingId: "held-1",
+        }) as never
+      )
+      .mockResolvedValueOnce(
+        baseRequest({
+          status: BookingRequestStatus.DECLINED,
+          heldBookingId: null,
+        }) as never
+      );
+    mockedUpdateMany.mockResolvedValue({ count: 1 } as never);
+    mockedBookingFindUnique.mockResolvedValue({
+      id: "held-1",
+      status: BookingStatus.AWAITING_REVIEW,
+    } as never);
+    mockedCancelBooking.mockResolvedValue({
+      status: 200,
+      data: { success: true },
+    } as never);
+
+    const updated = await declineBookingRequest({
+      requestId: "req-1",
+      adminMemberId: "admin-1",
+      reason: "Fully booked",
+      ipAddress: "203.0.113.7",
+    });
+
+    // The status-guarded decline claim ran (flip to DECLINED)...
+    expect(mockedUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: BookingRequestStatus.DECLINED }),
+      })
+    );
+    // ...then the hold was released via the shared cancel path (which detaches
+    // heldBookingId + frees the held beds — verified in booking-cancel's own
+    // tests) with the admin identity + client IP and a suppressed cancellation
+    // email.
+    expect(mockedCancelBooking).toHaveBeenCalledWith(
+      "held-1",
+      "admin-1",
+      "ADMIN",
+      "203.0.113.7",
+      "card",
+      { suppressCustomerNotification: true }
+    );
+    expect(updated?.status).toBe(BookingRequestStatus.DECLINED);
+  });
+
+  it("releases the hold for a SCHOOL request too (same path, no type branch) (#1365)", async () => {
+    mockedFindUnique
+      .mockResolvedValueOnce(
+        baseRequest({
+          type: "SCHOOL",
+          status: BookingRequestStatus.PRICED,
+          heldBookingId: "held-school-1",
+        }) as never
+      )
+      .mockResolvedValueOnce(
+        baseRequest({
+          type: "SCHOOL",
+          status: BookingRequestStatus.DECLINED,
+          heldBookingId: null,
+        }) as never
+      );
+    mockedUpdateMany.mockResolvedValue({ count: 1 } as never);
+    mockedBookingFindUnique.mockResolvedValue({
+      id: "held-school-1",
+      status: BookingStatus.AWAITING_REVIEW,
+    } as never);
+    mockedCancelBooking.mockResolvedValue({
+      status: 200,
+      data: { success: true },
+    } as never);
+
+    const updated = await declineBookingRequest({
+      requestId: "req-1",
+      adminMemberId: "admin-1",
+      ipAddress: "203.0.113.8",
+    });
+
+    expect(mockedCancelBooking).toHaveBeenCalledWith(
+      "held-school-1",
+      "admin-1",
+      "ADMIN",
+      "203.0.113.8",
+      "card",
+      { suppressCustomerNotification: true }
+    );
+    expect(updated?.status).toBe(BookingRequestStatus.DECLINED);
+  });
+
+  it("forwards a 409 from the cancel path after a successful decline claim (concurrent release race) (#1365)", async () => {
+    // For VERIFIED/PRICED there is no requester quote-accept to race (no sent
+    // quote), so a cancel-path 409 can only be a concurrent cancel of the SAME
+    // held booking (double-submit / simultaneous Release hold). The decline
+    // claim succeeds; cancelBooking's single-flight returns 409 and we forward
+    // it — the hold is released either way.
+    mockedFindUnique.mockResolvedValue(
+      baseRequest({
+        status: BookingRequestStatus.PRICED,
+        heldBookingId: "held-1",
+      }) as never
+    );
+    mockedUpdateMany.mockResolvedValue({ count: 1 } as never);
+    mockedBookingFindUnique.mockResolvedValue({
+      id: "held-1",
+      status: BookingStatus.AWAITING_REVIEW,
+    } as never);
+    mockedCancelBooking.mockResolvedValue({
+      status: 409,
+      error: "This booking was concurrently accepted or cancelled and can no longer be cancelled",
+    } as never);
+
+    await expect(
+      declineBookingRequest({
+        requestId: "req-1",
+        adminMemberId: "admin-1",
+        ipAddress: "203.0.113.7",
+      })
+    ).rejects.toMatchObject({ status: 409 });
+
+    // Claim-first: the decline flip DID run and the shared cancel path was
+    // invoked before the 409 surfaced.
+    expect(mockedUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: BookingRequestStatus.DECLINED }),
+      })
+    );
+    expect(mockedCancelBooking).toHaveBeenCalled();
+  });
+
+  it("detaches a non-live held booking (already CANCELLED) on a successful decline and proceeds (#1365)", async () => {
+    mockedFindUnique
+      .mockResolvedValueOnce(
+        baseRequest({
+          status: BookingRequestStatus.PRICED,
+          heldBookingId: "held-1",
+        }) as never
+      )
+      .mockResolvedValueOnce(
+        baseRequest({
+          status: BookingRequestStatus.DECLINED,
+          heldBookingId: null,
+        }) as never
+      );
+    mockedUpdateMany.mockResolvedValue({ count: 1 } as never);
+    // The held booking is no longer a live hold (already cancelled elsewhere).
+    mockedBookingFindUnique.mockResolvedValue({
+      id: "held-1",
+      status: BookingStatus.CANCELLED,
+    } as never);
+
+    const updated = await declineBookingRequest({
+      requestId: "req-1",
+      adminMemberId: "admin-1",
+    });
+
+    // Nothing live to cancel: detach the pointer, no cancelBooking, no abort.
+    expect(mockedCancelBooking).not.toHaveBeenCalled();
+    expect(mockedUpdateMany).toHaveBeenCalledWith({
+      where: { id: "req-1", heldBookingId: "held-1" },
+      data: { heldBookingId: null },
+    });
+    expect(updated?.status).toBe(BookingRequestStatus.DECLINED);
+  });
+
+  it("detaches a stale held pointer (held booking gone) on a successful decline and proceeds (#1365)", async () => {
+    mockedFindUnique
+      .mockResolvedValueOnce(
+        baseRequest({
+          status: BookingRequestStatus.PRICED,
+          heldBookingId: "held-gone",
+        }) as never
+      )
+      .mockResolvedValueOnce(
+        baseRequest({
+          status: BookingRequestStatus.DECLINED,
+          heldBookingId: null,
+        }) as never
+      );
+    mockedUpdateMany.mockResolvedValue({ count: 1 } as never);
+    // The held booking no longer exists.
+    mockedBookingFindUnique.mockResolvedValue(null as never);
+
+    const updated = await declineBookingRequest({
+      requestId: "req-1",
+      adminMemberId: "admin-1",
+    });
+
+    // Nothing to cancel; the stale pointer is detached, then the decline lands.
+    expect(mockedCancelBooking).not.toHaveBeenCalled();
+    expect(mockedUpdateMany).toHaveBeenCalledWith({
+      where: { id: "req-1", heldBookingId: "held-gone" },
+      data: { heldBookingId: null },
+    });
+    expect(updated?.status).toBe(BookingRequestStatus.DECLINED);
   });
 });
 

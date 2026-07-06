@@ -29,6 +29,7 @@ import {
 import { z } from "zod";
 import { hashActionToken, issueActionToken } from "@/lib/action-tokens";
 import { logAudit } from "@/lib/audit";
+import { cancelBooking } from "@/lib/booking-cancel";
 import { recordBookingEvent } from "@/lib/booking-events";
 import { assertNoBookingMemberNightConflicts } from "@/lib/booking-member-night-conflicts";
 import { checkCapacityForGuestRanges } from "@/lib/capacity";
@@ -474,6 +475,7 @@ export async function declineBookingRequest(input: {
   requestId: string;
   adminMemberId: string;
   reason?: string | null;
+  ipAddress?: string;
 }) {
   const request = await prisma.bookingRequest.findUnique({
     where: { id: input.requestId },
@@ -533,6 +535,78 @@ export async function declineBookingRequest(input: {
     summary: "Booking request declined",
     metadata: { reason: declineReason },
   });
+
+  // #1365 (F18): a declined request that still holds capacity — a held
+  // AWAITING_REVIEW booking (a SCHOOL manual hold via `holdBookingRequestSlots`)
+  // pointed to by `heldBookingId` — must have that hold released, otherwise the
+  // beds stay sterilised forever after the decline. This runs CLAIM-FIRST:
+  // strictly AFTER the status-guarded flip above actually claimed the request
+  // (count > 0). A wrong-state decline therefore 409s WITHOUT ever touching the
+  // hold — in particular a generic QUOTE_SENT held request (auto-hold-on-send,
+  // #1280) is NOT in the VERIFIED/PRICED set this route declines, so its hold is
+  // left intact for the quote-decline / quote-expiry / "Release hold" paths and
+  // never destroyed by a failed decline. The declinable states (VERIFIED/PRICED)
+  // have NO sent quote, so there is no requester quote-accept to race: once the
+  // request is claimed DECLINED its held booking cannot be converted to a live
+  // PENDING booking, so `cancelBooking` here can only ever act on a genuine
+  // AWAITING_REVIEW hold (never clobber a just-accepted booking). Releasing
+  // reuses the shared `cancelBooking` path (mirroring the admin "Release hold"
+  // route): it cancels the held booking, reconciles/frees the beds, detaches
+  // `heldBookingId`, and audits. It self-locks on advisory key 1 and runs its
+  // own transactions, so it stays OUTSIDE any surrounding transaction — called
+  // plainly here. SCHOOL requests use this same function, covered with no type
+  // branch.
+  if (request.heldBookingId) {
+    const held = await prisma.booking.findUnique({
+      where: { id: request.heldBookingId },
+      select: { id: true, status: true },
+    });
+    if (held && held.status === BookingStatus.AWAITING_REVIEW) {
+      const result = await cancelBooking(
+        request.heldBookingId,
+        input.adminMemberId,
+        "ADMIN",
+        input.ipAddress ?? "",
+        "card",
+        // Admin declining, not the requester cancelling: suppress the
+        // requester's "booking cancelled" email. The detach/reconcile/audit in
+        // the shared cancel path still run.
+        { suppressCustomerNotification: true }
+      );
+      // Defensive: a concurrent cancel of the SAME held booking (a
+      // double-submitted decline, or a simultaneous admin "Release hold") won
+      // cancelBooking's single-flight (#1160/#1311). The hold is being/has been
+      // released either way, so forward the 409. (Unreachable via a quote-accept
+      // for VERIFIED/PRICED — those carry no sent quote.)
+      if (result.status === 409) {
+        throw new BookingRequestError(result.error, 409);
+      }
+      if (result.status !== 200) {
+        logger.error(
+          {
+            requestId: request.id,
+            bookingId: request.heldBookingId,
+            error: result.error,
+          },
+          "Failed to release booking-request hold during decline"
+        );
+        throw new BookingRequestError(
+          "Could not release the booking request's capacity hold",
+          result.status
+        );
+      }
+      // Success: cancelBooking cancelled the held booking, reconciled/freed its
+      // beds, and detached `heldBookingId` itself.
+    } else {
+      // The held pointer is stale or the booking is no longer a live hold
+      // (already CANCELLED, or gone). Nothing to cancel — just detach the
+      // pointer so the declined request stops referencing a dead hold.
+      await prisma.bookingRequest.updateMany({
+        where: { id: request.id, heldBookingId: request.heldBookingId },
+        data: { heldBookingId: null },
+      });
+    }
+  }
 
   return prisma.bookingRequest.findUnique({ where: { id: input.requestId } });
 }
