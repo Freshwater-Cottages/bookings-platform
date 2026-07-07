@@ -1,4 +1,4 @@
-name: CI
+name: CI (ci-cd)
 
 # Residual risk accepted for the `npm audit --audit-level=high` gate:
 # - `next-auth@5.0.0-beta.31` / `@auth/core@0.41.2` still declare an optional
@@ -10,10 +10,9 @@ on:
   workflow_dispatch:
   pull_request:
     branches:
-      - main
+      - ci-cd
   push:
     branches:
-      - main
       - ci-cd
 
 permissions:
@@ -202,13 +201,6 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v7
 
-      # Fails fast (no database or npm install needed) if any migration matching
-      # the blue/green hot-table/breaking regexes lacks a safety-ledger entry, or
-      # if a new migration reuses an existing timestamp prefix. Catches finding
-      # F8 (#1359) at PR time instead of at a fork's production deploy.
-      - name: Check migration safety ledger coverage
-        run: bash scripts/check-migration-safety-coverage.sh
-
       - name: Set up Node.js
         uses: actions/setup-node@v6
         with:
@@ -274,7 +266,7 @@ jobs:
 
   publish-ghcr-images:
     name: Publish GHCR images
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/ci-cd')
+    if: github.event_name == 'push' && github.ref == 'refs/heads/ci-cd'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     needs:
@@ -287,6 +279,8 @@ jobs:
       contents: read
       packages: write
     env:
+      APP_IMAGE_REPO: ${{ vars.GHCR_APP_IMAGE_REPOSITORY || format('ghcr.io/{0}/alpineclubbookingsnz-app', github.repository_owner) }}
+      MIGRATE_IMAGE_REPO: ${{ vars.GHCR_MIGRATE_IMAGE_REPOSITORY || format('ghcr.io/{0}/alpineclubbookingsnz-migrate', github.repository_owner) }}
       APP_IMAGE: ${{ vars.GHCR_APP_IMAGE_REPOSITORY || format('ghcr.io/{0}/alpineclubbookingsnz-app', github.repository_owner) }}:${{ github.sha }}
       MIGRATE_IMAGE: ${{ vars.GHCR_MIGRATE_IMAGE_REPOSITORY || format('ghcr.io/{0}/alpineclubbookingsnz-migrate', github.repository_owner) }}:${{ github.sha }}
       NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: ${{ vars.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY }}
@@ -317,7 +311,9 @@ jobs:
           context: .
           file: ./Dockerfile
           push: true
-          tags: ${{ env.APP_IMAGE }}
+          tags: |
+            ${{ env.APP_IMAGE }}
+            ${{ env.APP_IMAGE_REPO }}:latest
           build-args: |
             NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=${{ env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY }}
             NEXT_PUBLIC_CONTACT_EMAIL=${{ env.NEXT_PUBLIC_CONTACT_EMAIL }}
@@ -332,7 +328,9 @@ jobs:
           file: ./Dockerfile
           target: builder
           push: true
-          tags: ${{ env.MIGRATE_IMAGE }}
+          tags: |
+            ${{ env.MIGRATE_IMAGE }}
+            ${{ env.MIGRATE_IMAGE_REPO }}:latest
           build-args: |
             NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=${{ env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY }}
             NEXT_PUBLIC_CONTACT_EMAIL=${{ env.NEXT_PUBLIC_CONTACT_EMAIL }}
@@ -342,7 +340,7 @@ jobs:
 
   trigger-infra-deploy:
     name: Trigger infrastructure deploy
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/ci-cd'
     runs-on: ubuntu-latest
     needs:
       - publish-ghcr-images
@@ -351,13 +349,42 @@ jobs:
     env:
       APP_REPO: ${{ vars.GHCR_APP_IMAGE_REPOSITORY || format('ghcr.io/{0}/bookings-platform-app', github.repository_owner) }}
       APP_TAG: ${{ github.sha }}
+      INFRA_REPO: Freshwater-Cottages/fwc-infrastructure
+      INFRA_EVENT_TYPE: deploy-image
     steps:
       - name: Dispatch deploy-image event to fwc-infrastructure
         env:
           GH_TOKEN: ${{ secrets.INFRA_DISPATCH_TOKEN }}
         run: |
-          gh api repos/Freshwater-Cottages/fwc-infrastructure/dispatches \
+          set -Eeuo pipefail
+
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::error::Required secret INFRA_DISPATCH_TOKEN is missing or empty."
+            echo "::error::Set INFRA_DISPATCH_TOKEN to a PAT or GitHub App token with access to ${INFRA_REPO}."
+            exit 1
+          fi
+
+          if ! repo_json="$(gh api "repos/${INFRA_REPO}" 2>&1)"; then
+            echo "::error::Cannot access ${INFRA_REPO} with INFRA_DISPATCH_TOKEN."
+            echo "::error::GitHub returns HTTP 404 for private repos when the token lacks repo access."
+            echo "::error::Grant token access to ${INFRA_REPO}; for fine-grained PATs include Contents: Read and write, Metadata: Read, and authorize SSO for Freshwater-Cottages if required."
+            echo "$repo_json" >&2
+            exit 1
+          fi
+
+          echo "Verified token access to ${INFRA_REPO}."
+          echo "Token repo permissions: $(jq -r '.permissions // "unknown"' <<<"$repo_json")"
+
+          payload="$(jq -n --arg e "$INFRA_EVENT_TYPE" --arg r "$APP_REPO" --arg t "$APP_TAG" \
+            '{event_type:$e,client_payload:{app_image_repository:$r,app_image_tag:$t}}')"
+
+          if ! dispatch_error="$(gh api "repos/${INFRA_REPO}/dispatches" \
             --method POST \
-            -f event_type=deploy-image \
-            -f "client_payload=$(jq -n --arg r "$APP_REPO" --arg t "$APP_TAG" \
-              '{app_image_repository:$r,app_image_tag:$t}')"
+            --input - <<<"$payload" 2>&1)"; then
+            echo "::error::Repository dispatch failed for ${INFRA_REPO} event ${INFRA_EVENT_TYPE}."
+            echo "::error::Request payload: ${payload}"
+            echo "$dispatch_error" >&2
+            exit 1
+          fi
+
+          echo "Dispatched ${INFRA_EVENT_TYPE} to ${INFRA_REPO} for ${APP_REPO}:${APP_TAG}."

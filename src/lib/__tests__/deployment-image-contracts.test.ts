@@ -72,6 +72,19 @@ describe("deployment image contracts", () => {
     expect(deployScript).toContain("--internal-blue-green-deploy");
   });
 
+  it("validates source branch against DEPLOY_REF instead of hardcoded main", () => {
+    const deployScript = readRepoFile("scripts/run-production-blue-green-deploy.sh");
+
+    expect(deployScript).toContain("resolve_deploy_ref_contract");
+    expect(deployScript).toContain('DEPLOY_REF="${DEPLOY_REF:-origin/main}"');
+    expect(deployScript).toContain(
+      'echo "Source repository must be on expected deploy branch before deploy. DEPLOY_REF=${DEPLOY_REF} expects branch ${EXPECTED_SOURCE_BRANCH}; current branch: $branch" >&2',
+    );
+    expect(deployScript).toContain('git -C "$SOURCE_REPO" fetch --prune "$DEPLOY_REF_REMOTE"');
+    expect(deployScript).not.toContain("Source repository must be on main before deploy.");
+    expect(deployScript).not.toContain("Source repository must be clean on main before deploy");
+  });
+
   it("pulls supplied app and migration images instead of building locally", () => {
     const deploy = readRepoFile("scripts/run-production-blue-green-deploy.sh");
 

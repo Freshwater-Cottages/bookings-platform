@@ -748,8 +748,9 @@ rate-limited, or temporarily unavailable.
 | `GHCR_APP_IMAGE_REPOSITORY`            | App image repository used by the production wrapper.                  |
 | `GHCR_MIGRATE_IMAGE_REPOSITORY`        | Migration image repository used by the production wrapper.            |
 | `GHCR_READ_TOKEN`                      | Example token name for logging a host into GHCR with `read:packages`. |
+| `INFRA_DISPATCH_TOKEN`                 | Actions secret consumed by `.github/workflows/ci-cd.yml` to call `repos/Freshwater-Cottages/fwc-infrastructure/dispatches`; requires access to the infra repo (fine-grained PAT: Contents read/write + Metadata read). |
 | `SOURCE_REPO`                          | Source checkout used by the production wrapper.                       |
-| `DEPLOY_REF`                           | Git ref deployed by the production wrapper, default `origin/main`.    |
+| `DEPLOY_REF`                           | Git ref deployed by the production wrapper, default `origin/main`; source checkout branch must match this ref's branch context (for example `ci-cd` or `origin/ci-cd`). |
 | `FETCH_LATEST`                         | Whether the wrapper fetches before resolving `DEPLOY_REF`.            |
 | `DEPLOY_WORKSPACE_ROOT`                | Parent directory for clean deploy workspaces.                         |
 | `SYNC_SOURCE_REPO_AFTER_DEPLOY`        | Whether the wrapper syncs the source checkout after deploy.           |

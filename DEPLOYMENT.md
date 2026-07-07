@@ -1,5 +1,7 @@
 # Deployment Reference
 
+Quick start: [Lightsail Bootstrap Runbook](./lightsail-bootstrap-runbook.md)
+
 This guide describes the AlpineClubBookingsNZ production deployment shape. It is a
 reference for operators adapting the project to their own infrastructure.
 
@@ -150,11 +152,16 @@ The supported AlpineClubBookingsNZ deploy path is:
 ./scripts/run-production-blue-green-deploy.sh
 ```
 
-The script snapshots the resolved `origin/main` commit into a clean deployment
-workspace, selects the matching GHCR image tags, copies the environment file,
+The script snapshots the resolved `DEPLOY_REF` commit (default `origin/main`)
+into a clean deployment workspace, selects the matching GHCR image tags, copies
+the environment file,
 preserves Caddy upstream state, then re-enters itself with
 `--internal-blue-green-deploy` to run the blue/green deployment engine before it
 fast-forwards the clean checkout after success.
+
+Before deploy, the wrapper validates that the source checkout is on the branch
+implied by `DEPLOY_REF` (for example `ci-cd`, `origin/ci-cd`, or
+`refs/heads/ci-cd`) and that the working tree is clean.
 
 For a fork, set `GHCR_APP_IMAGE_REPOSITORY` and
 `GHCR_MIGRATE_IMAGE_REPOSITORY` if your image names differ from the defaults.

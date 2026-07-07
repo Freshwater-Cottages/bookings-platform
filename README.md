@@ -279,8 +279,9 @@ production deploy script:
 ```
 
 On `main`, GitHub Actions builds and publishes the app and migration images to
-GHCR with commit-SHA tags. The production deploy script resolves `origin/main`,
-pulls those exact images, re-enters its internal deploy-engine mode, runs
+GHCR with commit-SHA tags. The production deploy script resolves `DEPLOY_REF`
+(default `origin/main`), validates that the source checkout is on the matching
+branch context, pulls those exact images, re-enters its internal deploy-engine mode, runs
 migrations, and switches Caddy after health checks pass.
 
 The public image packages are `alpineclubbookingsnz-app` for the runnable web
