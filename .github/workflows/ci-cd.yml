@@ -279,10 +279,10 @@ jobs:
       contents: read
       packages: write
     env:
-      APP_IMAGE_REPO: ${{ vars.GHCR_APP_IMAGE_REPOSITORY || format('ghcr.io/{0}/alpineclubbookingsnz-app', github.repository_owner) }}
-      MIGRATE_IMAGE_REPO: ${{ vars.GHCR_MIGRATE_IMAGE_REPOSITORY || format('ghcr.io/{0}/alpineclubbookingsnz-migrate', github.repository_owner) }}
-      APP_IMAGE: ${{ vars.GHCR_APP_IMAGE_REPOSITORY || format('ghcr.io/{0}/alpineclubbookingsnz-app', github.repository_owner) }}:${{ github.sha }}
-      MIGRATE_IMAGE: ${{ vars.GHCR_MIGRATE_IMAGE_REPOSITORY || format('ghcr.io/{0}/alpineclubbookingsnz-migrate', github.repository_owner) }}:${{ github.sha }}
+      APP_IMAGE_REPO: ${{ vars.GHCR_APP_IMAGE_REPOSITORY || format('ghcr.io/{0}/bookings-platform-app', github.repository_owner) }}
+      MIGRATE_IMAGE_REPO: ${{ vars.GHCR_MIGRATE_IMAGE_REPOSITORY || format('ghcr.io/{0}/bookings-platform-migrate', github.repository_owner) }}
+      APP_IMAGE: ${{ vars.GHCR_APP_IMAGE_REPOSITORY || format('ghcr.io/{0}/bookings-platform-app', github.repository_owner) }}:${{ github.sha }}
+      MIGRATE_IMAGE: ${{ vars.GHCR_MIGRATE_IMAGE_REPOSITORY || format('ghcr.io/{0}/bookings-platform-migrate', github.repository_owner) }}:${{ github.sha }}
       NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: ${{ vars.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY }}
       NEXT_PUBLIC_CONTACT_EMAIL: ${{ vars.NEXT_PUBLIC_CONTACT_EMAIL }}
       NEXT_PUBLIC_SENTRY_DSN: ${{ vars.NEXT_PUBLIC_SENTRY_DSN }}
@@ -338,8 +338,8 @@ jobs:
           cache-from: type=gha,scope=alpineclubbookingsnz-migrate
           cache-to: type=gha,mode=max,scope=alpineclubbookingsnz-migrate
 
-  trigger-infra-deploy:
-    name: Trigger infrastructure deploy
+  trigger-infra-image-rollout:
+    name: Trigger infrastructure image rollout
     if: github.event_name == 'push' && github.ref == 'refs/heads/ci-cd'
     runs-on: ubuntu-latest
     needs:
@@ -350,9 +350,10 @@ jobs:
       APP_REPO: ${{ vars.GHCR_APP_IMAGE_REPOSITORY || format('ghcr.io/{0}/bookings-platform-app', github.repository_owner) }}
       APP_TAG: ${{ github.sha }}
       INFRA_REPO: Freshwater-Cottages/fwc-infrastructure
-      INFRA_EVENT_TYPE: deploy-image
+      INFRA_EVENT_TYPE: image-rollout
+      DEPLOYMENT_PATH: image-only
     steps:
-      - name: Dispatch deploy-image event to fwc-infrastructure
+      - name: Dispatch image-only rollout event to fwc-infrastructure
         env:
           GH_TOKEN: ${{ secrets.INFRA_DISPATCH_TOKEN }}
         run: |
@@ -375,8 +376,15 @@ jobs:
           echo "Verified token access to ${INFRA_REPO}."
           echo "Token repo permissions: $(jq -r '.permissions // "unknown"' <<<"$repo_json")"
 
-          payload="$(jq -n --arg e "$INFRA_EVENT_TYPE" --arg r "$APP_REPO" --arg t "$APP_TAG" \
-            '{event_type:$e,client_payload:{app_image_repository:$r,app_image_tag:$t}}')"
+          payload="$(jq -n \
+            --arg e "$INFRA_EVENT_TYPE" \
+            --arg path "$DEPLOYMENT_PATH" \
+            --arg r "$APP_REPO" \
+            --arg t "$APP_TAG" \
+            --arg src_repo "${GITHUB_REPOSITORY}" \
+            --arg src_ref "${GITHUB_REF}" \
+            --arg src_sha "${GITHUB_SHA}" \
+            '{event_type:$e,client_payload:{deployment_path:$path,app_image_repository:$r,app_image_tag:$t,source_repository:$src_repo,source_ref:$src_ref,source_sha:$src_sha}}')"
 
           if ! dispatch_error="$(gh api "repos/${INFRA_REPO}/dispatches" \
             --method POST \
