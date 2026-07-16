@@ -176,9 +176,10 @@ matter for this upgrade:
   This runs `validate_pending_migrations_blue_green_safe`, which calls
   `scripts/validate-blue-green-migrations.sh` against every pending migration.
   This is the gate. It must pass green (see [§2.1](#21-the-validator-gate-is-expected-green)).
-- **Step 13/19 — "Running Prisma migrations".** `prisma migrate deploy` runs
-  through the `migrate` service, applying the pending migrations to the shared
-  Postgres **while the old color can still be serving traffic**.
+- **Step 13/19 — "Running Prisma migrations and create-if-missing seed".**
+  `prisma migrate deploy` runs through the `migrate` service, then the same
+  release runs `npm run db:seed` (create-if-missing) so first-run databases
+  become usable while repeat deploys remain safe.
 - **Step 14/19 / Step 15/19 — starts the new (target) web color and refreshes
   the cron leader on the new release, both before cutover.**
 - **Step 16/19 — "Switching Caddy upstream to target web service".** This is

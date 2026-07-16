@@ -77,8 +77,8 @@ as a red flag and check the release notes before deploying.
    **quiet window** (or a deferral) if any pending migration is
    `old_code_compatible=no`.
 5. Run the deploy (`scripts/run-production-blue-green-deploy.sh` runs the
-   migration-safety validator, then `prisma migrate deploy`, then cuts traffic
-   over to the new color).
+   migration-safety validator, then `prisma migrate deploy`, then create-if-missing
+   `npm run db:seed`, then cuts traffic over to the new color).
 6. Complete the post-upgrade actions for the release (below). Confirm the app is
    healthy on the new color before you consider the upgrade done.
 

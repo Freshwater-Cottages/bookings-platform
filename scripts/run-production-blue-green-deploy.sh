@@ -759,6 +759,9 @@ validate_env_contract() {
   require_http_url_env_key NEXTAUTH_URL
   require_one_of_env_keys "AUTH_SECRET or NEXTAUTH_SECRET" AUTH_SECRET NEXTAUTH_SECRET
   require_non_placeholder_env_key CRON_SECRET
+  require_non_placeholder_env_key SEED_ADMIN_EMAIL
+  require_non_placeholder_env_key SEED_ADMIN_PASSWORD
+  require_non_placeholder_env_key SEED_LODGE_PASSWORD
   require_non_placeholder_env_key STRIPE_SECRET_KEY
   require_non_placeholder_env_key NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
   require_non_placeholder_env_key STRIPE_WEBHOOK_SECRET
@@ -1141,6 +1144,30 @@ verify_prisma_migration_status() {
   )"; then
     printf '%s\n' "$status_output" >&2
     echo "Prisma migration status check failed after migrate deploy." >&2
+    return 1
+  fi
+}
+
+run_create_if_missing_seed() {
+  local seed_output
+  local seed_admin_email
+  local seed_admin_password
+  local seed_lodge_password
+
+  seed_admin_email="$(trim_whitespace "$(get_env_file_value SEED_ADMIN_EMAIL)")"
+  seed_admin_password="$(trim_whitespace "$(get_env_file_value SEED_ADMIN_PASSWORD)")"
+  seed_lodge_password="$(trim_whitespace "$(get_env_file_value SEED_LODGE_PASSWORD)")"
+
+  if ! seed_output="$(
+    docker compose --profile "$MIGRATE_SERVICE" run --rm \
+      -e SEED_ADMIN_EMAIL="$seed_admin_email" \
+      -e SEED_ADMIN_PASSWORD="$seed_admin_password" \
+      -e SEED_LODGE_PASSWORD="$seed_lodge_password" \
+      "$MIGRATE_SERVICE" \
+      npm run db:seed 2>&1
+  )"; then
+    printf '%s\n' "$seed_output" >&2
+    echo "Create-if-missing seed failed after migrations." >&2
     return 1
   fi
 }
@@ -1593,10 +1620,11 @@ validate_prisma_schema_matches_migrations
 validate_pending_migrations_blue_green_safe
 info "Prisma schema matches the committed migration history."
 
-step "13/19" "Running Prisma migrations"
+step "13/19" "Running Prisma migrations and create-if-missing seed"
 docker compose --profile "$MIGRATE_SERVICE" run --rm "$MIGRATE_SERVICE"
 verify_prisma_migration_status
-info "Prisma migration status reports the database is up to date."
+run_create_if_missing_seed
+info "Prisma migration status is up to date, and the create-if-missing seed has been applied."
 
 step "14/19" "Starting target web service"
 docker compose up -d --force-recreate "$TARGET_SERVICE"
